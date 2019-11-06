@@ -104,11 +104,9 @@ size_t Interpreter::GetDispatchTableIndex(Bytecode bytecode,
 }
 
 void Interpreter::IterateDispatchTable(RootVisitor* v) {
-  if (FLAG_embedded_builtins && !isolate_->serializer_enabled() &&
-      isolate_->embedded_blob() != nullptr) {
-// If builtins are embedded (and we're not generating a snapshot), then
-// every bytecode handler will be off-heap, so there's no point iterating
-// over them.
+  if (!isolate_->serializer_enabled() && isolate_->embedded_blob() != nullptr) {
+// If we're not generating a snapshot, then every bytecode handler will be
+// off-heap, so there's no point iterating over them.
 #ifdef DEBUG
     for (int i = 0; i < kDispatchTableSize; i++) {
       Address code_entry = dispatch_table_[i];
@@ -215,7 +213,24 @@ void InterpreterCompilationJob::CheckAndPrintBytecodeMismatch(
 
     Handle<BytecodeArray> new_bytecode =
         generator()->FinalizeBytecode(isolate, parse_info()->script());
-    std::cerr << "Bytecode mismatch\nOriginal bytecode:\n";
+
+    std::cerr << "Bytecode mismatch";
+#ifdef OBJECT_PRINT
+    std::cerr << " found for function: ";
+    Handle<String> name = parse_info()->function_name()->string();
+    if (name->length() == 0) {
+      std::cerr << "anonymous";
+    } else {
+      name->StringPrint(std::cerr);
+    }
+    Object script_name = parse_info()->script()->GetNameOrSourceURL();
+    if (script_name.IsString()) {
+      std::cerr << " ";
+      String::cast(script_name).StringPrint(std::cerr);
+      std::cerr << ":" << parse_info()->start_position();
+    }
+#endif
+    std::cerr << "\nOriginal bytecode:\n";
     bytecode->Disassemble(std::cerr);
     std::cerr << "\nNew bytecode:\n";
     new_bytecode->Disassemble(std::cerr);
@@ -269,7 +284,7 @@ std::unique_ptr<UnoptimizedCompilationJob> Interpreter::NewCompilationJob(
     ParseInfo* parse_info, FunctionLiteral* literal,
     AccountingAllocator* allocator,
     std::vector<FunctionLiteral*>* eager_inner_literals) {
-  return base::make_unique<InterpreterCompilationJob>(
+  return std::make_unique<InterpreterCompilationJob>(
       parse_info, literal, allocator, eager_inner_literals);
 }
 
@@ -277,10 +292,10 @@ std::unique_ptr<UnoptimizedCompilationJob>
 Interpreter::NewSourcePositionCollectionJob(
     ParseInfo* parse_info, FunctionLiteral* literal,
     Handle<BytecodeArray> existing_bytecode, AccountingAllocator* allocator) {
-  auto job = base::make_unique<InterpreterCompilationJob>(parse_info, literal,
-                                                          allocator, nullptr);
+  auto job = std::make_unique<InterpreterCompilationJob>(parse_info, literal,
+                                                         allocator, nullptr);
   job->compilation_info()->SetBytecodeArray(existing_bytecode);
-  return std::unique_ptr<UnoptimizedCompilationJob> { static_cast<UnoptimizedCompilationJob*>(job.release()) };
+  return job;
 }
 
 void Interpreter::ForEachBytecode(

@@ -166,13 +166,14 @@ constexpr int kElidedFrameSlots = 0;
 #endif
 
 constexpr int kDoubleSizeLog2 = 3;
+constexpr size_t kMaxWasmCodeMB = 1024;
+constexpr size_t kMaxWasmCodeMemory = kMaxWasmCodeMB * MB;
 #if V8_TARGET_ARCH_ARM64
 // ARM64 only supports direct calls within a 128 MB range.
-constexpr size_t kMaxWasmCodeMB = 128;
+constexpr size_t kMaxWasmCodeSpaceSize = 128 * MB;
 #else
-constexpr size_t kMaxWasmCodeMB = 1024;
+constexpr size_t kMaxWasmCodeSpaceSize = kMaxWasmCodeMemory;
 #endif
-constexpr size_t kMaxWasmCodeMemory = kMaxWasmCodeMB * MB;
 
 #if V8_HOST_ARCH_64_BIT
 constexpr int kSystemPointerSizeLog2 = 3;
@@ -230,7 +231,7 @@ constexpr int kTaggedSizeLog2 = 2;
 
 // These types define raw and atomic storage types for tagged values stored
 // on V8 heap.
-using Tagged_t = int32_t;
+using Tagged_t = uint32_t;
 using AtomicTagged_t = base::Atomic32;
 
 #else
@@ -244,11 +245,6 @@ using Tagged_t = Address;
 using AtomicTagged_t = base::AtomicWord;
 
 #endif  // V8_COMPRESS_POINTERS
-
-// Defines whether the branchless or branchful implementation of pointer
-// decompression should be used.
-constexpr bool kUseBranchlessPtrDecompressionInRuntime = false;
-constexpr bool kUseBranchlessPtrDecompressionInGeneratedCode = false;
 
 STATIC_ASSERT(kTaggedSize == (1 << kTaggedSizeLog2));
 STATIC_ASSERT((kTaggedSize == 8) == TAGGED_SIZE_8_BYTES);
@@ -287,6 +283,8 @@ constexpr int kMaxRegularHeapObjectSize = (1 << (kPageSizeBits - 1));
 constexpr int kBitsPerByte = 8;
 constexpr int kBitsPerByteLog2 = 3;
 constexpr int kBitsPerSystemPointer = kSystemPointerSize * kBitsPerByte;
+constexpr int kBitsPerSystemPointerLog2 =
+    kSystemPointerSizeLog2 + kBitsPerByteLog2;
 constexpr int kBitsPerInt = kIntSize * kBitsPerByte;
 
 // IEEE 754 single precision floating point number bit layout.
@@ -602,7 +600,6 @@ class JSReceiver;
 class JSArray;
 class JSFunction;
 class JSObject;
-class LargeObjectSpace;
 class MacroAssembler;
 class Map;
 class MapSpace;
@@ -620,6 +617,7 @@ class NewSpace;
 class NewLargeObjectSpace;
 class NumberDictionary;
 class Object;
+class OldLargeObjectSpace;
 template <HeapObjectReferenceType kRefType, typename StorageType>
 class TaggedImpl;
 class StrongTaggedValue;
@@ -632,7 +630,6 @@ class FullObjectSlot;
 class FullMaybeObjectSlot;
 class FullHeapObjectSlot;
 class OldSpace;
-class ParameterCount;
 class ReadOnlySpace;
 class RelocInfo;
 class Scope;
@@ -761,6 +758,17 @@ enum MinimumCapacity {
 
 enum GarbageCollector { SCAVENGER, MARK_COMPACTOR, MINOR_MARK_COMPACTOR };
 
+enum class LocalSpaceKind {
+  kNone,
+  kOffThreadSpace,
+  kCompactionSpaceForScavenge,
+  kCompactionSpaceForMarkCompact,
+  kCompactionSpaceForMinorMarkCompact,
+
+  kFirstCompactionSpace = kCompactionSpaceForScavenge,
+  kLastCompactionSpace = kCompactionSpaceForMinorMarkCompact,
+};
+
 enum Executability { NOT_EXECUTABLE, EXECUTABLE };
 
 enum VisitMode {
@@ -779,6 +787,12 @@ enum class BytecodeFlushMode {
   kStressFlushBytecode,
 };
 
+// Indicates whether a script should be parsed and compiled in REPL mode.
+enum class REPLMode {
+  kYes,
+  kNo,
+};
+
 // Flag indicating whether code is built into the VM (one of the natives files).
 enum NativesFlag { NOT_NATIVES_CODE, EXTENSION_CODE, INSPECTOR_CODE };
 
@@ -795,8 +809,6 @@ enum InlineCacheState {
   NO_FEEDBACK,
   // Has never been executed.
   UNINITIALIZED,
-  // Has been executed but monomorphic state has been delayed.
-  PREMONOMORPHIC,
   // Has been executed and only one receiver type has been seen.
   MONOMORPHIC,
   // Check failed due to prototype (or map deprecation).
@@ -816,8 +828,6 @@ inline const char* InlineCacheState2String(InlineCacheState state) {
       return "NOFEEDBACK";
     case UNINITIALIZED:
       return "UNINITIALIZED";
-    case PREMONOMORPHIC:
-      return "PREMONOMORPHIC";
     case MONOMORPHIC:
       return "MONOMORPHIC";
     case RECOMPUTE_HANDLER:
@@ -1043,6 +1053,8 @@ constexpr uint64_t kHoleNanInt64 =
 // ES6 section 20.1.2.6 Number.MAX_SAFE_INTEGER
 constexpr double kMaxSafeInteger = 9007199254740991.0;  // 2^53-1
 
+constexpr double kMaxUInt32Double = double{kMaxUInt32};
+
 // The order of this enum has to be kept in sync with the predicates below.
 enum class VariableMode : uint8_t {
   // User declared variables:
@@ -1189,7 +1201,17 @@ enum VariableLocation : uint8_t {
   // A named slot in a module's export table.
   MODULE,
 
-  kLastVariableLocation = MODULE
+  // An indexed slot in a script context. index() is the variable
+  // index in the context object on the heap, starting at 0.
+  // Important: REPL_GLOBAL variables from different scripts with the
+  //            same name share a single script context slot. Every
+  //            script context will reserve a slot, but only one will be used.
+  // REPL_GLOBAL variables are stored in script contexts, but accessed like
+  // globals, i.e. they always require a lookup at runtime to find the right
+  // script context.
+  REPL_GLOBAL,
+
+  kLastVariableLocation = REPL_GLOBAL
 };
 
 // ES6 specifies declarative environment records with mutable and immutable
@@ -1215,6 +1237,10 @@ enum VariableLocation : uint8_t {
 // distinct initialization step (kNeedsInitialization) or if the binding is
 // immediately initialized upon creation (kCreatedInitialized).
 enum InitializationFlag : uint8_t { kNeedsInitialization, kCreatedInitialized };
+
+// Static variables can only be used with the class in the closest
+// class scope as receivers.
+enum class IsStaticFlag : uint8_t { kNotStatic, kStatic };
 
 enum MaybeAssignedFlag : uint8_t { kNotAssigned, kMaybeAssigned };
 

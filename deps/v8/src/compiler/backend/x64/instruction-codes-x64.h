@@ -158,8 +158,11 @@ namespace compiler {
   V(X64F64x2Splat)                        \
   V(X64F64x2ExtractLane)                  \
   V(X64F64x2ReplaceLane)                  \
+  V(X64F64x2SConvertI64x2)                \
+  V(X64F64x2UConvertI64x2)                \
   V(X64F64x2Abs)                          \
   V(X64F64x2Neg)                          \
+  V(X64F64x2Sqrt)                         \
   V(X64F64x2Add)                          \
   V(X64F64x2Sub)                          \
   V(X64F64x2Mul)                          \
@@ -170,6 +173,8 @@ namespace compiler {
   V(X64F64x2Ne)                           \
   V(X64F64x2Lt)                           \
   V(X64F64x2Le)                           \
+  V(X64F64x2Qfma)                         \
+  V(X64F64x2Qfms)                         \
   V(X64F32x4Splat)                        \
   V(X64F32x4ExtractLane)                  \
   V(X64F32x4ReplaceLane)                  \
@@ -177,6 +182,7 @@ namespace compiler {
   V(X64F32x4UConvertI32x4)                \
   V(X64F32x4Abs)                          \
   V(X64F32x4Neg)                          \
+  V(X64F32x4Sqrt)                         \
   V(X64F32x4RecipApprox)                  \
   V(X64F32x4RecipSqrtApprox)              \
   V(X64F32x4Add)                          \
@@ -190,6 +196,8 @@ namespace compiler {
   V(X64F32x4Ne)                           \
   V(X64F32x4Lt)                           \
   V(X64F32x4Le)                           \
+  V(X64F32x4Qfma)                         \
+  V(X64F32x4Qfms)                         \
   V(X64I64x2Splat)                        \
   V(X64I64x2ExtractLane)                  \
   V(X64I64x2ReplaceLane)                  \
@@ -300,6 +308,7 @@ namespace compiler {
   V(X64S128Or)                            \
   V(X64S128Xor)                           \
   V(X64S128Select)                        \
+  V(X64S8x16Swizzle)                      \
   V(X64S8x16Shuffle)                      \
   V(X64S32x4Swizzle)                      \
   V(X64S32x4Shuffle)                      \

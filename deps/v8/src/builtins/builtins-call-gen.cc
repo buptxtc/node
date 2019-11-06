@@ -9,6 +9,7 @@
 #include "src/codegen/macro-assembler.h"
 #include "src/common/globals.h"
 #include "src/execution/isolate.h"
+#include "src/execution/protectors.h"
 #include "src/objects/api-callbacks.h"
 #include "src/objects/arguments.h"
 #include "src/objects/property-cell.h"
@@ -16,9 +17,6 @@
 
 namespace v8 {
 namespace internal {
-
-template <typename T>
-using TNode = compiler::TNode<T>;
 
 void Builtins::Generate_CallFunction_ReceiverIsNullOrUndefined(
     MacroAssembler* masm) {
@@ -297,7 +295,7 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructWithSpread(
   TNode<PropertyCell> protector_cell = ArrayIteratorProtectorConstant();
   GotoIf(
       TaggedEqual(LoadObjectField(protector_cell, PropertyCell::kValueOffset),
-                  SmiConstant(Isolate::kProtectorInvalid)),
+                  SmiConstant(Protectors::kProtectorInvalid)),
       &if_generic);
   {
     // The fast-path accesses the {spread} elements directly.
@@ -414,8 +412,9 @@ TNode<JSReceiver> CallOrConstructBuiltinsAssembler::GetCompatibleReceiver(
       // {var_template} variable), and see if that is a HeapObject.
       // If it's a Smi then it is non-instance prototype on some
       // initial map, which cannot be the case for API instances.
-      TNode<Object> constructor = LoadObjectField(
-          var_template.value(), Map::kConstructorOrBackPointerOffset);
+      TNode<Object> constructor =
+          LoadObjectField(var_template.value(),
+                          Map::kConstructorOrBackPointerOrNativeContextOffset);
       GotoIf(TaggedIsSmi(constructor), &holder_next);
 
       // Now there are three cases for {constructor} that we care

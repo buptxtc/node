@@ -10,19 +10,22 @@
   # the bulk-memory proposal. Since we've enabled bulk-memory by default, we
   # need to update to use its testsuite.
   'linking': [FAIL],
+  'binary-leb128': [FAIL],
   'elem': [FAIL],
   'data': [FAIL],
-  # TODO(v8:9658): The encoding of element segments changed in the bulk memory
-  # proposal
-  'proposals/bulk-memory-operations/bulk': [FAIL],
-  'proposals/bulk-memory-operations/table_init': [FAIL],
-  'proposals/bulk-memory-operations/table_copy': [FAIL],
-  'proposals/bulk-memory-operations/elem': [FAIL],
-  'proposals/bulk-memory-operations/binary': [FAIL],
   # TODO(mstarzinger): Roll newest tests into "js-types" repository.
   'proposals/js-types/exports': [FAIL],
   'proposals/js-types/globals': [FAIL],
   'proposals/js-types/linking': [FAIL],
+  # TODO(v8:9865): Throwing behavior changed for these tests.
+  'proposals/bulk-memory-operations/linking': [FAIL],
+  'proposals/bulk-memory-operations/bulk': [FAIL],
+  'proposals/bulk-memory-operations/elem': [FAIL],
+  'proposals/bulk-memory-operations/data': [FAIL],
+  # TODO(thibaudm): Spec tests do not check multi-return functions correctly.
+  'proposals/multi-value/call': [FAIL],
+  'proposals/multi-value/if': [FAIL],
+  'proposals/multi-value/func': [FAIL],
 }],  # ALWAYS
 
 ['arch == mipsel or arch == mips64el or arch == mips or arch == mips64', {
@@ -81,11 +84,6 @@
   # TODO(v8:7777): Re-enable once wasm is supported in jitless mode.
   '*': [SKIP],
 }], # lite_mode or variant == jitless
-
-##############################################################################
-['variant == jitless and not embedded_builtins', {
-  '*': [SKIP],
-}], # variant == jitless and not embedded_builtins
 
 
 ]

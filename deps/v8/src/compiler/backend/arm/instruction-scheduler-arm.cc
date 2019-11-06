@@ -108,6 +108,20 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kArmFloat32Min:
     case kArmFloat64Min:
     case kArmFloat64SilenceNaN:
+    case kArmF64x2Splat:
+    case kArmF64x2ExtractLane:
+    case kArmF64x2ReplaceLane:
+    case kArmF64x2Abs:
+    case kArmF64x2Neg:
+    case kArmF64x2Sqrt:
+    case kArmF64x2Add:
+    case kArmF64x2Sub:
+    case kArmF64x2Mul:
+    case kArmF64x2Div:
+    case kArmF64x2Eq:
+    case kArmF64x2Ne:
+    case kArmF64x2Lt:
+    case kArmF64x2Le:
     case kArmF32x4Splat:
     case kArmF32x4ExtractLane:
     case kArmF32x4ReplaceLane:
@@ -115,6 +129,7 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kArmF32x4UConvertI32x4:
     case kArmF32x4Abs:
     case kArmF32x4Neg:
+    case kArmF32x4Sqrt:
     case kArmF32x4RecipApprox:
     case kArmF32x4RecipSqrtApprox:
     case kArmF32x4Add:
@@ -239,6 +254,7 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kArmS8x16TransposeLeft:
     case kArmS8x16TransposeRight:
     case kArmS8x16Concat:
+    case kArmS8x16Swizzle:
     case kArmS8x16Shuffle:
     case kArmS32x2Reverse:
     case kArmS16x4Reverse:

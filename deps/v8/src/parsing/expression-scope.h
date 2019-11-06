@@ -66,6 +66,24 @@ class ExpressionScope {
     return result;
   }
 
+  void MergeVariableList(
+      ScopedList<std::pair<VariableProxy*, int>>* variable_list) {
+    if (!CanBeExpression()) return;
+    // Merged variables come from a CanBeDeclaration expression scope, and
+    // weren't added as unresolved references to the variable scope yet. Add
+    // them to the variable scope on the boundary where it becomes clear they
+    // aren't declarations. We explicitly delay declaring the variables up to
+    // that point to avoid trying to add them to the unresolved list multiple
+    // times, e.g., for (((a))).
+    if (!CanBeDeclaration()) {
+      for (auto& proxy_initializer_pair : *variable_list) {
+        VariableProxy* proxy = proxy_initializer_pair.first;
+        this->parser()->scope()->AddUnresolved(proxy);
+      }
+    }
+    variable_list->MergeInto(AsExpressionParsingScope()->variable_list());
+  }
+
   Variable* Declare(const AstRawString* name, int pos = kNoSourcePosition) {
     if (type_ == kParameterDeclaration) {
       return AsParameterDeclarationParsingScope()->Declare(name, pos);
@@ -625,14 +643,8 @@ class AccumulationScope {
     if (!scope->CanBeExpression()) return;
     scope_ = scope->AsExpressionParsingScope();
     for (int i = 0; i < kNumberOfErrors; i++) {
-      // If the underlying scope is already invalid at the start, stop
-      // accumulating. That means an error was found outside of an
-      // accumulating path.
-      if (!scope_->is_valid(i)) {
-        scope_ = nullptr;
-        break;
-      }
       copy(i);
+      scope_->clear(i);
     }
   }
 
@@ -720,21 +732,19 @@ class ArrowHeadParsingScope : public ExpressionParsingScope<Types> {
     // references.
     this->parser()->next_arrow_function_info_.ClearStrictParameterError();
     ExpressionParsingScope<Types>::ValidateExpression();
-    for (auto& proxy_initializer_pair : *this->variable_list()) {
-      VariableProxy* proxy = proxy_initializer_pair.first;
-      this->parser()->scope()->AddUnresolved(proxy);
-    }
+    this->parent()->MergeVariableList(this->variable_list());
   }
 
   DeclarationScope* ValidateAndCreateScope() {
     DCHECK(!this->is_verified());
+    DeclarationScope* result = this->parser()->NewFunctionScope(kind());
     if (declaration_error_location.IsValid()) {
       ExpressionScope<Types>::Report(declaration_error_location,
                                      declaration_error_message);
+      return result;
     }
     this->ValidatePattern();
 
-    DeclarationScope* result = this->parser()->NewFunctionScope(kind());
     if (!has_simple_parameter_list_) result->SetHasNonSimpleParameters();
     VariableKind kind = PARAMETER_VARIABLE;
     VariableMode mode =

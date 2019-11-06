@@ -13,6 +13,28 @@ namespace wasm {
 
 namespace liftoff {
 
+//  half
+//  slot        Frame
+//  -----+--------------------+---------------------------
+//  n+3  |   parameter n      |
+//  ...  |       ...          |
+//   4   |   parameter 1      | or parameter 2
+//   3   |   parameter 0      | or parameter 1
+//   2   |  (result address)  | or parameter 0
+//  -----+--------------------+---------------------------
+//   1   | return addr (ra)   |
+//   0   | previous frame (fp)|
+//  -----+--------------------+  <-- frame ptr (fp)
+//  -1   | 0xa: WASM_COMPILED |
+//  -2   |     instance       |
+//  -----+--------------------+---------------------------
+//  -3   |    slot 0 (high)   |   ^
+//  -4   |    slot 0 (low)    |   |
+//  -5   |    slot 1 (high)   | Frame slots
+//  -6   |    slot 1 (low)    |   |
+//       |                    |   v
+//  -----+--------------------+  <-- stack ptr (sp)
+//
 #if defined(V8_TARGET_BIG_ENDIAN)
 constexpr int32_t kLowWordOffset = 4;
 constexpr int32_t kHighWordOffset = 0;
@@ -27,9 +49,12 @@ constexpr int32_t kConstantStackSpace = 8;
 constexpr int32_t kFirstStackSlotOffset =
     kConstantStackSpace + LiftoffAssembler::kStackSlotSize;
 
+inline int GetStackSlotOffset(uint32_t index) {
+  return kFirstStackSlotOffset + index * LiftoffAssembler::kStackSlotSize;
+}
+
 inline MemOperand GetStackSlot(uint32_t index) {
-  int32_t offset = index * LiftoffAssembler::kStackSlotSize;
-  return MemOperand(fp, -kFirstStackSlotOffset - offset);
+  return MemOperand(fp, -GetStackSlotOffset(index));
 }
 
 inline MemOperand GetHalfStackSlot(uint32_t index, RegPairHalf half) {
@@ -583,6 +608,34 @@ void LiftoffAssembler::FillI64Half(Register reg, uint32_t index,
   lw(reg, liftoff::GetHalfStackSlot(index, half));
 }
 
+void LiftoffAssembler::FillStackSlotsWithZero(uint32_t index, uint32_t count) {
+  DCHECK_LT(0, count);
+  uint32_t last_stack_slot = index + count - 1;
+  RecordUsedSpillSlot(last_stack_slot);
+
+  if (count <= 12) {
+    // Special straight-line code for up to 12 slots. Generates one
+    // instruction per slot (<=12 instructions total).
+    for (uint32_t offset = 0; offset < count; ++offset) {
+      Sw(zero_reg, liftoff::GetStackSlot(index + offset));
+    }
+  } else {
+    // General case for bigger counts (12 instructions).
+    // Use a0 for start address (inclusive), a1 for end address (exclusive).
+    Push(a1, a0);
+    Addu(a0, fp, Operand(-liftoff::GetStackSlotOffset(last_stack_slot)));
+    Addu(a1, fp, Operand(-liftoff::GetStackSlotOffset(index) + kStackSlotSize));
+
+    Label loop;
+    bind(&loop);
+    Sw(zero_reg, MemOperand(a0, kSystemPointerSize));
+    addiu(a0, a0, kSystemPointerSize);
+    BranchShort(&loop, ne, a0, Operand(a1));
+
+    Pop(a1, a0);
+  }
+}
+
 void LiftoffAssembler::emit_i32_mul(Register dst, Register lhs, Register rhs) {
   TurboAssembler::Mul(dst, lhs, rhs);
 }
@@ -653,14 +706,12 @@ I32_BINOP_I(xor, Xor)
 
 #undef I32_BINOP_I
 
-bool LiftoffAssembler::emit_i32_clz(Register dst, Register src) {
+void LiftoffAssembler::emit_i32_clz(Register dst, Register src) {
   TurboAssembler::Clz(dst, src);
-  return true;
 }
 
-bool LiftoffAssembler::emit_i32_ctz(Register dst, Register src) {
+void LiftoffAssembler::emit_i32_ctz(Register dst, Register src) {
   TurboAssembler::Ctz(dst, src);
-  return true;
 }
 
 bool LiftoffAssembler::emit_i32_popcnt(Register dst, Register src) {
@@ -668,10 +719,10 @@ bool LiftoffAssembler::emit_i32_popcnt(Register dst, Register src) {
   return true;
 }
 
-#define I32_SHIFTOP(name, instruction)                                      \
-  void LiftoffAssembler::emit_i32_##name(                                   \
-      Register dst, Register src, Register amount, LiftoffRegList pinned) { \
-    instruction(dst, src, amount);                                          \
+#define I32_SHIFTOP(name, instruction)                               \
+  void LiftoffAssembler::emit_i32_##name(Register dst, Register src, \
+                                         Register amount) {          \
+    instruction(dst, src, amount);                                   \
   }
 #define I32_SHIFTOP_I(name, instruction)                             \
   I32_SHIFTOP(name, instruction##v)                                  \
@@ -752,12 +803,9 @@ inline void Emit64BitShiftOperation(
     LiftoffAssembler* assm, LiftoffRegister dst, LiftoffRegister src,
     Register amount,
     void (TurboAssembler::*emit_shift)(Register, Register, Register, Register,
-                                       Register, Register, Register),
-    LiftoffRegList pinned) {
+                                       Register, Register, Register)) {
   Label move, done;
-  pinned.set(dst);
-  pinned.set(src);
-  pinned.set(amount);
+  LiftoffRegList pinned = LiftoffRegList::ForRegs(dst, src, amount);
 
   // If some of destination registers are in use, get another, unused pair.
   // That way we prevent overwriting some input registers while shifting.
@@ -792,21 +840,21 @@ inline void Emit64BitShiftOperation(
 }  // namespace liftoff
 
 void LiftoffAssembler::emit_i64_shl(LiftoffRegister dst, LiftoffRegister src,
-                                    Register amount, LiftoffRegList pinned) {
+                                    Register amount) {
   liftoff::Emit64BitShiftOperation(this, dst, src, amount,
-                                   &TurboAssembler::ShlPair, pinned);
+                                   &TurboAssembler::ShlPair);
 }
 
 void LiftoffAssembler::emit_i64_sar(LiftoffRegister dst, LiftoffRegister src,
-                                    Register amount, LiftoffRegList pinned) {
+                                    Register amount) {
   liftoff::Emit64BitShiftOperation(this, dst, src, amount,
-                                   &TurboAssembler::SarPair, pinned);
+                                   &TurboAssembler::SarPair);
 }
 
 void LiftoffAssembler::emit_i64_shr(LiftoffRegister dst, LiftoffRegister src,
-                                    Register amount, LiftoffRegList pinned) {
+                                    Register amount) {
   liftoff::Emit64BitShiftOperation(this, dst, src, amount,
-                                   &TurboAssembler::ShrPair, pinned);
+                                   &TurboAssembler::ShrPair);
 }
 
 void LiftoffAssembler::emit_i64_shr(LiftoffRegister dst, LiftoffRegister src,
@@ -814,6 +862,40 @@ void LiftoffAssembler::emit_i64_shr(LiftoffRegister dst, LiftoffRegister src,
   DCHECK(is_uint6(amount));
   ShrPair(dst.high_gp(), dst.low_gp(), src.high_gp(), src.low_gp(), amount,
           kScratchReg);
+}
+
+void LiftoffAssembler::emit_i64_clz(LiftoffRegister dst, LiftoffRegister src) {
+  // return high == 0 ? 32 + CLZ32(low) : CLZ32(high);
+  Label done;
+  Label high_is_zero;
+  Branch(&high_is_zero, eq, src.high_gp(), Operand(zero_reg));
+
+  clz(dst.low_gp(), src.high_gp());
+  jmp(&done);
+
+  bind(&high_is_zero);
+  clz(dst.low_gp(), src.low_gp());
+  Addu(dst.low_gp(), dst.low_gp(), Operand(32));
+
+  bind(&done);
+  mov(dst.high_gp(), zero_reg);  // High word of result is always 0.
+}
+
+void LiftoffAssembler::emit_i64_ctz(LiftoffRegister dst, LiftoffRegister src) {
+  // return low == 0 ? 32 + CTZ32(high) : CTZ32(low);
+  Label done;
+  Label low_is_zero;
+  Branch(&low_is_zero, eq, src.low_gp(), Operand(zero_reg));
+
+  Ctz(dst.low_gp(), src.low_gp());
+  jmp(&done);
+
+  bind(&low_is_zero);
+  Ctz(dst.low_gp(), src.high_gp());
+  Addu(dst.low_gp(), dst.low_gp(), Operand(32));
+
+  bind(&done);
+  mov(dst.high_gp(), zero_reg);  // High word of result is always 0.
 }
 
 void LiftoffAssembler::emit_i32_to_intptr(Register dst, Register src) {

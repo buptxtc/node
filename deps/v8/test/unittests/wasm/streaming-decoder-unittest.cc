@@ -99,7 +99,7 @@ class WasmStreamingDecoderTest : public ::testing::Test {
     for (int split = 0; split <= data.length(); ++split) {
       MockStreamingResult result;
       StreamingDecoder stream(
-          base::make_unique<MockStreamingProcessor>(&result));
+          std::make_unique<MockStreamingProcessor>(&result));
       stream.OnBytesReceived(data.SubVector(0, split));
       stream.OnBytesReceived(data.SubVector(split, data.length()));
       stream.Finish();
@@ -115,7 +115,7 @@ class WasmStreamingDecoderTest : public ::testing::Test {
     for (int split = 0; split <= data.length(); ++split) {
       MockStreamingResult result;
       StreamingDecoder stream(
-          base::make_unique<MockStreamingProcessor>(&result));
+          std::make_unique<MockStreamingProcessor>(&result));
       stream.OnBytesReceived(data.SubVector(0, split));
       stream.OnBytesReceived(data.SubVector(split, data.length()));
       stream.Finish();
@@ -128,7 +128,7 @@ class WasmStreamingDecoderTest : public ::testing::Test {
 
 TEST_F(WasmStreamingDecoderTest, EmptyStream) {
   MockStreamingResult result;
-  StreamingDecoder stream(base::make_unique<MockStreamingProcessor>(&result));
+  StreamingDecoder stream(std::make_unique<MockStreamingProcessor>(&result));
   stream.Finish();
   EXPECT_FALSE(result.ok());
 }
@@ -137,7 +137,7 @@ TEST_F(WasmStreamingDecoderTest, IncompleteModuleHeader) {
   const uint8_t data[] = {U32_LE(kWasmMagic), U32_LE(kWasmVersion)};
   {
     MockStreamingResult result;
-    StreamingDecoder stream(base::make_unique<MockStreamingProcessor>(&result));
+    StreamingDecoder stream(std::make_unique<MockStreamingProcessor>(&result));
     stream.OnBytesReceived(VectorOf(data, 1));
     stream.Finish();
     EXPECT_FALSE(result.ok());
@@ -608,14 +608,13 @@ TEST_F(WasmStreamingDecoderTest, TwoCodeSections) {
       0x1,                   // Number of Functions
       0x1,                   // Function Length
       0x0,                   // Function
-      kCodeSectionCode,      // Section ID      -- ERROR (where it should be)
-      0x3,                   // Section Length  -- ERROR (where it is reported)
+      kCodeSectionCode,      // Section ID      -- ERROR
+      0x3,                   // Section Length
       0x1,                   // Number of Functions
       0x1,                   // Function Length
       0x0,                   // Function
   };
-  // TODO(wasm): This should report at the second kCodeSectionCode.
-  ExpectFailure(ArrayVector(data), sizeof(data) - 4,
+  ExpectFailure(ArrayVector(data), sizeof(data) - 5,
                 "code section can only appear once");
 }
 
@@ -651,14 +650,13 @@ TEST_F(WasmStreamingDecoderTest, UnknownSectionSandwich) {
       0x1,                   // Name Length
       0x1,                   // Name
       0x0,                   // Content
-      kCodeSectionCode,      // Section ID     -- ERROR (where it should be)
-      0x3,                   // Section Length -- ERROR (where it is reported)
+      kCodeSectionCode,      // Section ID     -- ERROR
+      0x3,                   // Section Length
       0x1,                   // Number of Functions
       0x1,                   // Function Length
       0x0,                   // Function
   };
-  // TODO(wasm): This should report at the second kCodeSectionCode.
-  ExpectFailure(ArrayVector(data), sizeof(data) - 4,
+  ExpectFailure(ArrayVector(data), sizeof(data) - 5,
                 "code section can only appear once");
 }
 

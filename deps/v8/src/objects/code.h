@@ -61,6 +61,7 @@ class Code : public HeapObject {
 #ifdef ENABLE_DISASSEMBLER
   const char* GetName(Isolate* isolate) const;
   V8_EXPORT_PRIVATE void Disassemble(const char* name, std::ostream& os,
+                                     Isolate* isolate,
                                      Address current_pc = kNullAddress);
 #endif
 
@@ -369,7 +370,11 @@ class Code : public HeapObject {
 
   static inline bool IsWeakObjectInOptimizedCode(HeapObject object);
 
-  // Return true if the function is inlined in the code.
+  // Returns false if this is an embedded builtin Code object that's in
+  // read_only_space and hence doesn't have execute permissions.
+  inline bool IsExecutable();
+
+  // Returns true if the function is inlined in the code.
   bool Inlines(SharedFunctionInfo sfi);
 
   class OptimizedCodeIterator;

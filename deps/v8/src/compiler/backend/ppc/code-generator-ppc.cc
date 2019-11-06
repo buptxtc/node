@@ -185,7 +185,7 @@ class OutOfLineRecordWrite final : public OutOfLineCode {
       __ CallEphemeronKeyBarrier(object_, scratch1_, save_fp_mode);
     } else if (stub_mode_ == StubCallMode::kCallWasmRuntimeStub) {
       __ CallRecordWriteStub(object_, scratch1_, remembered_set_action,
-                             save_fp_mode, wasm::WasmCode::kWasmRecordWrite);
+                             save_fp_mode, wasm::WasmCode::kRecordWrite);
     } else {
       __ CallRecordWriteStub(object_, scratch1_, remembered_set_action,
                              save_fp_mode);
@@ -263,9 +263,8 @@ Condition FlagsConditionToCondition(FlagsCondition condition, ArchOpcode op) {
   UNREACHABLE();
 }
 
-void EmitWordLoadPoisoningIfNeeded(
-    CodeGenerator* codegen, Instruction* instr,
-    PPCOperandConverter& i) {  // NOLINT(runtime/references)
+void EmitWordLoadPoisoningIfNeeded(CodeGenerator* codegen, Instruction* instr,
+                                   PPCOperandConverter const& i) {
   const MemoryAccessMode access_mode =
       static_cast<MemoryAccessMode>(MiscField::decode(instr->opcode()));
   if (access_mode == kMemoryAccessPoisoned) {
@@ -705,9 +704,7 @@ void CodeGenerator::AssemblePopArgumentsAdaptorFrame(Register args_reg,
            MemOperand(fp, ArgumentsAdaptorFrameConstants::kLengthOffset));
   __ SmiUntag(caller_args_count_reg);
 
-  ParameterCount callee_args_count(args_reg);
-  __ PrepareForTailCall(callee_args_count, caller_args_count_reg, scratch2,
-                        scratch3);
+  __ PrepareForTailCall(args_reg, caller_args_count_reg, scratch2, scratch3);
   __ bind(&done);
 }
 
@@ -1020,11 +1017,24 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
 #endif
       break;
     case kArchCallCFunction: {
-      int const num_parameters = MiscField::decode(instr->opcode());
+      int misc_field = MiscField::decode(instr->opcode());
+      int num_parameters = misc_field;
+      bool has_function_descriptor = false;
       Label start_call;
       bool isWasmCapiFunction =
           linkage()->GetIncomingDescriptor()->IsWasmCapiFunction();
+#if defined(_AIX)
+      // AIX/PPC64BE Linux uses a function descriptor
+      int kNumParametersMask = kHasFunctionDescriptorBitMask - 1;
+      num_parameters = kNumParametersMask & misc_field;
+      has_function_descriptor =
+          (misc_field & kHasFunctionDescriptorBitMask) != 0;
+      // AIX emits 2 extra Load instructions under CallCFunctionHelper
+      // due to having function descriptor.
+      constexpr int offset = 11 * kInstrSize;
+#else
       constexpr int offset = 9 * kInstrSize;
+#endif
       if (isWasmCapiFunction) {
         __ mflr(r0);
         __ bind(&start_call);
@@ -1036,16 +1046,17 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       }
       if (instr->InputAt(0)->IsImmediate()) {
         ExternalReference ref = i.InputExternalReference(0);
-        __ CallCFunction(ref, num_parameters);
+        __ CallCFunction(ref, num_parameters, has_function_descriptor);
       } else {
         Register func = i.InputRegister(0);
-        __ CallCFunction(func, num_parameters);
+        __ CallCFunction(func, num_parameters, has_function_descriptor);
       }
       // TODO(miladfar): In the above block, kScratchReg must be populated with
       // the strictly-correct PC, which is the return address at this spot. The
-      // offset is set to 36 (9 * kInstrSize) right now, which is counted from
-      // where we are binding to the label and ends at this spot. If failed,
-      // replace it with the correct offset suggested. More info on f5ab7d3.
+      // offset is set to 36 (9 * kInstrSize) on pLinux and 44 on AIX, which is
+      // counted from where we are binding to the label and ends at this spot.
+      // If failed, replace it with the correct offset suggested. More info on
+      // f5ab7d3.
       if (isWasmCapiFunction)
         CHECK_EQ(offset, __ SizeOfCodeGeneratedSince(&start_call));
 
@@ -1127,11 +1138,32 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       }
       break;
     case kArchStackPointerGreaterThan: {
+      // Potentially apply an offset to the current stack pointer before the
+      // comparison to consider the size difference of an optimized frame versus
+      // the contained unoptimized frames.
+
+      Register lhs_register = sp;
+      uint32_t offset;
+
+      if (ShouldApplyOffsetToStackCheck(instr, &offset)) {
+        lhs_register = i.TempRegister(0);
+        if (is_int16(offset)) {
+          __ subi(lhs_register, sp, Operand(offset));
+        } else {
+          __ mov(kScratchReg, Operand(kScratchReg));
+          __ sub(lhs_register, sp, kScratchReg);
+        }
+      }
+
       constexpr size_t kValueIndex = 0;
       DCHECK(instr->InputAt(kValueIndex)->IsRegister());
-      __ cmpl(sp, i.InputRegister(kValueIndex), cr0);
+      __ cmpl(lhs_register, i.InputRegister(kValueIndex), cr0);
       break;
     }
+    case kArchStackCheckOffset:
+      __ LoadSmiLiteral(i.OutputRegister(),
+                        Smi::FromInt(GetStackCheckOffset()));
+      break;
     case kArchTruncateDoubleToI:
       __ TruncateDoubleToI(isolate(), zone(), i.OutputRegister(),
                            i.InputDoubleRegister(0), DetermineStubCallMode());

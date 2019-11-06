@@ -49,7 +49,6 @@
 #include "src/objects/objects-inl.h"
 #include "src/runtime/runtime.h"
 #include "src/snapshot/code-serializer.h"
-#include "src/snapshot/natives.h"
 #include "src/snapshot/partial-deserializer.h"
 #include "src/snapshot/partial-serializer.h"
 #include "src/snapshot/read-only-deserializer.h"
@@ -98,8 +97,7 @@ class TestSerializer {
     return v8_isolate;
   }
 
-  static v8::Isolate* NewIsolateFromBlob(
-      StartupBlobs& blobs) {  // NOLINT(runtime/references)
+  static v8::Isolate* NewIsolateFromBlob(const StartupBlobs& blobs) {
     SnapshotData startup_snapshot(blobs.startup);
     SnapshotData read_only_snapshot(blobs.read_only);
     ReadOnlyDeserializer read_only_deserializer(&read_only_snapshot);
@@ -204,8 +202,7 @@ Vector<const uint8_t> ConstructSource(Vector<const uint8_t> head,
                                source_length);
 }
 
-static v8::Isolate* Deserialize(
-    StartupBlobs& blobs) {  // NOLINT(runtime/references)
+static v8::Isolate* Deserialize(const StartupBlobs& blobs) {
   v8::Isolate* isolate = TestSerializer::NewIsolateFromBlob(blobs);
   CHECK(isolate);
   return isolate;
@@ -1522,7 +1519,8 @@ TEST(CodeSerializerWithProfiler) {
 
   LocalContext context;
   Isolate* isolate = CcTest::i_isolate();
-  isolate->compilation_cache()->Disable();  // Disable same-isolate code cache.
+  isolate->compilation_cache()
+      ->DisableScriptAndEval();  // Disable same-isolate code cache.
 
   v8::HandleScope scope(CcTest::isolate());
 
@@ -1563,7 +1561,8 @@ TEST(CodeSerializerWithProfiler) {
 void TestCodeSerializerOnePlusOneImpl(bool verify_builtins_count = true) {
   LocalContext context;
   Isolate* isolate = CcTest::i_isolate();
-  isolate->compilation_cache()->Disable();  // Disable same-isolate code cache.
+  isolate->compilation_cache()
+      ->DisableScriptAndEval();  // Disable same-isolate code cache.
 
   v8::HandleScope scope(CcTest::isolate());
 
@@ -1676,7 +1675,8 @@ TEST(CodeSerializerPromotedToCompilationCache) {
 TEST(CodeSerializerInternalizedString) {
   LocalContext context;
   Isolate* isolate = CcTest::i_isolate();
-  isolate->compilation_cache()->Disable();  // Disable same-isolate code cache.
+  isolate->compilation_cache()
+      ->DisableScriptAndEval();  // Disable same-isolate code cache.
 
   v8::HandleScope scope(CcTest::isolate());
 
@@ -1734,7 +1734,8 @@ TEST(CodeSerializerInternalizedString) {
 TEST(CodeSerializerLargeCodeObject) {
   LocalContext context;
   Isolate* isolate = CcTest::i_isolate();
-  isolate->compilation_cache()->Disable();  // Disable same-isolate code cache.
+  isolate->compilation_cache()
+      ->DisableScriptAndEval();  // Disable same-isolate code cache.
 
   v8::HandleScope scope(CcTest::isolate());
 
@@ -1793,7 +1794,8 @@ TEST(CodeSerializerLargeCodeObjectWithIncrementalMarking) {
   LocalContext context;
   Isolate* isolate = CcTest::i_isolate();
   Heap* heap = isolate->heap();
-  isolate->compilation_cache()->Disable();  // Disable same-isolate code cache.
+  isolate->compilation_cache()
+      ->DisableScriptAndEval();  // Disable same-isolate code cache.
 
   v8::HandleScope scope(CcTest::isolate());
 
@@ -1863,7 +1865,8 @@ TEST(CodeSerializerLargeStrings) {
   LocalContext context;
   Isolate* isolate = CcTest::i_isolate();
   Factory* f = isolate->factory();
-  isolate->compilation_cache()->Disable();  // Disable same-isolate code cache.
+  isolate->compilation_cache()
+      ->DisableScriptAndEval();  // Disable same-isolate code cache.
 
   v8::HandleScope scope(CcTest::isolate());
 
@@ -1919,7 +1922,8 @@ TEST(CodeSerializerThreeBigStrings) {
   LocalContext context;
   Isolate* isolate = CcTest::i_isolate();
   Factory* f = isolate->factory();
-  isolate->compilation_cache()->Disable();  // Disable same-isolate code cache.
+  isolate->compilation_cache()
+      ->DisableScriptAndEval();  // Disable same-isolate code cache.
 
   v8::HandleScope scope(CcTest::isolate());
 
@@ -2038,7 +2042,8 @@ class SerializerTwoByteResource : public v8::String::ExternalStringResource {
 TEST(CodeSerializerExternalString) {
   LocalContext context;
   Isolate* isolate = CcTest::i_isolate();
-  isolate->compilation_cache()->Disable();  // Disable same-isolate code cache.
+  isolate->compilation_cache()
+      ->DisableScriptAndEval();  // Disable same-isolate code cache.
 
   v8::HandleScope scope(CcTest::isolate());
 
@@ -2104,7 +2109,8 @@ TEST(CodeSerializerExternalString) {
 TEST(CodeSerializerLargeExternalString) {
   LocalContext context;
   Isolate* isolate = CcTest::i_isolate();
-  isolate->compilation_cache()->Disable();  // Disable same-isolate code cache.
+  isolate->compilation_cache()
+      ->DisableScriptAndEval();  // Disable same-isolate code cache.
 
   Factory* f = isolate->factory();
 
@@ -2164,7 +2170,8 @@ TEST(CodeSerializerLargeExternalString) {
 TEST(CodeSerializerExternalScriptName) {
   LocalContext context;
   Isolate* isolate = CcTest::i_isolate();
-  isolate->compilation_cache()->Disable();  // Disable same-isolate code cache.
+  isolate->compilation_cache()
+      ->DisableScriptAndEval();  // Disable same-isolate code cache.
 
   Factory* f = isolate->factory();
 
@@ -3606,13 +3613,13 @@ UNINITIALIZED_TEST(SnapshotCreatorIncludeGlobalProxy) {
       // We can introduce new extensions, which could override functions already
       // in the snapshot.
       auto extension =
-          base::make_unique<v8::Extension>("new extension",
-                                           "function i() { return 24; }"
-                                           "function j() { return 25; }"
-                                           "let a = 26;"
-                                           "try {"
-                                           "  if (o.p == 7) o.p++;"
-                                           "} catch {}");
+          std::make_unique<v8::Extension>("new extension",
+                                          "function i() { return 24; }"
+                                          "function j() { return 25; }"
+                                          "let a = 26;"
+                                          "try {"
+                                          "  if (o.p == 7) o.p++;"
+                                          "} catch {}");
       extension->set_auto_enable(true);
       v8::RegisterExtension(std::move(extension));
       {
@@ -3900,7 +3907,7 @@ UNINITIALIZED_TEST(WeakArraySerializationInSnapshot) {
 TEST(WeakArraySerializationInCodeCache) {
   LocalContext context;
   Isolate* isolate = CcTest::i_isolate();
-  isolate->compilation_cache()->Disable();
+  isolate->compilation_cache()->DisableScriptAndEval();
 
   v8::HandleScope scope(CcTest::isolate());
 
@@ -3929,7 +3936,8 @@ TEST(CachedCompileFunctionInContext) {
   DisableAlwaysOpt();
   LocalContext env;
   Isolate* isolate = CcTest::i_isolate();
-  isolate->compilation_cache()->Disable();  // Disable same-isolate code cache.
+  isolate->compilation_cache()
+      ->DisableScriptAndEval();  // Disable same-isolate code cache.
 
   v8::HandleScope scope(CcTest::isolate());
 

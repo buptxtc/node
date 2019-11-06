@@ -161,6 +161,7 @@ v8_source_set("cctest_sources") {
     "interpreter/test-source-positions.cc",
     "libplatform/test-tracing.cc",
     "libsampler/test-sampler.cc",
+    "manually-externalized-buffer.h",
     "parsing/test-parse-decision.cc",
     "parsing/test-preparser.cc",
     "parsing/test-scanner-streams.cc",
@@ -185,6 +186,7 @@ v8_source_set("cctest_sources") {
     "test-api.h",
     "test-array-list.cc",
     "test-atomicops.cc",
+    "test-backing-store.cc",
     "test-bignum-dtoa.cc",
     "test-bignum.cc",
     "test-bit-vector.cc",
@@ -267,6 +269,7 @@ v8_source_set("cctest_sources") {
     "unicode-helpers.cc",
     "unicode-helpers.h",
     "wasm/test-c-wasm-entry.cc",
+    "wasm/test-grow-memory.cc",
     "wasm/test-jump-table-assembler.cc",
     "wasm/test-run-wasm-64.cc",
     "wasm/test-run-wasm-asmjs.cc",
@@ -293,16 +296,6 @@ v8_source_set("cctest_sources") {
     "wasm/wasm-run-utils.cc",
     "wasm/wasm-run-utils.h",
   ]
-
-  if (use_jumbo_build) {
-    jumbo_excluded_sources = [
-      # TODO(mostynb@opera.com): figure out the jumbo issues with these source
-      # files, and include them in jumbo compilation units.
-      "interpreter/bytecode-expectations-printer.cc",
-      "interpreter/test-bytecode-generator.cc",
-      "test-api.cc",
-    ]
-  }
 
   if (v8_current_cpu == "arm") {
     sources += [  ### gcmole(arch:arm) ###

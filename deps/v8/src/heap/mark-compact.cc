@@ -284,7 +284,7 @@ void EvacuationVerifier::VerifyEvacuationOnPage(Address start, Address end) {
   Address current = start;
   while (current < end) {
     HeapObject object = HeapObject::FromAddress(current);
-    if (!object.IsFiller()) object.Iterate(this);
+    if (!object.IsFreeSpaceOrFiller()) object.Iterate(this);
     current += object.Size();
   }
 }
@@ -468,7 +468,6 @@ void MarkCompactCollector::AddEvacuationCandidate(Page* p) {
   evacuation_candidates_.push_back(p);
 }
 
-
 static void TraceFragmentation(PagedSpace* space) {
   int number_of_pages = space->CountTotalPages();
   intptr_t reserved = (number_of_pages * space->AreaSize());
@@ -537,7 +536,6 @@ void MarkCompactCollector::VerifyMarkbitsAreClean(PagedSpace* space) {
     CHECK_EQ(0, non_atomic_marking_state()->live_bytes(p));
   }
 }
-
 
 void MarkCompactCollector::VerifyMarkbitsAreClean(NewSpace* space) {
   for (Page* p : PageRange(space->first_allocatable_address(), space->top())) {
@@ -786,7 +784,6 @@ void MarkCompactCollector::CollectEvacuationCandidates(PagedSpace* space) {
   }
 }
 
-
 void MarkCompactCollector::AbortCompaction() {
   if (compacting_) {
     RememberedSet<OLD_TO_OLD>::ClearAll(heap());
@@ -798,7 +795,6 @@ void MarkCompactCollector::AbortCompaction() {
   }
   DCHECK(evacuation_candidates_.empty());
 }
-
 
 void MarkCompactCollector::Prepare() {
   was_marked_incrementally_ = heap()->incremental_marking()->IsMarking();
@@ -1024,9 +1020,7 @@ class InternalizedStringTableCleaner : public ObjectVisitor {
     UNREACHABLE();
   }
 
-  int PointersRemoved() {
-    return pointers_removed_;
-  }
+  int PointersRemoved() { return pointers_removed_; }
 
  private:
   Heap* heap_;
@@ -1187,8 +1181,11 @@ class RecordMigratedSlotVisitor : public ObjectVisitor {
         DCHECK_IMPLIES(
             p->IsToPage(),
             p->IsFlagSet(Page::PAGE_NEW_NEW_PROMOTION) || p->IsLargePage());
-        RememberedSet<OLD_TO_NEW>::Insert<AccessMode::NON_ATOMIC>(
-            MemoryChunk::FromHeapObject(host), slot);
+
+        MemoryChunk* chunk = MemoryChunk::FromHeapObject(host);
+        DCHECK(chunk->SweepingDone());
+        DCHECK_NULL(chunk->sweeping_slot_set<AccessMode::NON_ATOMIC>());
+        RememberedSet<OLD_TO_NEW>::Insert<AccessMode::NON_ATOMIC>(chunk, slot);
       } else if (p->IsEvacuationCandidate()) {
         RememberedSet<OLD_TO_OLD>::Insert<AccessMode::NON_ATOMIC>(
             MemoryChunk::FromHeapObject(host), slot);
@@ -1348,24 +1345,42 @@ class EvacuateNewSpaceVisitor final : public EvacuateVisitorBase {
   explicit EvacuateNewSpaceVisitor(
       Heap* heap, LocalAllocator* local_allocator,
       RecordMigratedSlotVisitor* record_visitor,
-      Heap::PretenuringFeedbackMap* local_pretenuring_feedback)
+      Heap::PretenuringFeedbackMap* local_pretenuring_feedback,
+      bool always_promote_young)
       : EvacuateVisitorBase(heap, local_allocator, record_visitor),
         buffer_(LocalAllocationBuffer::InvalidBuffer()),
         promoted_size_(0),
         semispace_copied_size_(0),
         local_pretenuring_feedback_(local_pretenuring_feedback),
-        is_incremental_marking_(heap->incremental_marking()->IsMarking()) {}
+        is_incremental_marking_(heap->incremental_marking()->IsMarking()),
+        always_promote_young_(always_promote_young) {}
 
   inline bool Visit(HeapObject object, int size) override {
     if (TryEvacuateWithoutCopy(object)) return true;
     HeapObject target_object;
+
+    if (always_promote_young_) {
+      heap_->UpdateAllocationSite(object.map(), object,
+                                  local_pretenuring_feedback_);
+
+      if (!TryEvacuateObject(OLD_SPACE, object, size, &target_object)) {
+        heap_->FatalProcessOutOfMemory(
+            "MarkCompactCollector: young object promotion failed");
+      }
+
+      promoted_size_ += size;
+      return true;
+    }
+
     if (heap_->ShouldBePromoted(object.address()) &&
         TryEvacuateObject(OLD_SPACE, object, size, &target_object)) {
       promoted_size_ += size;
       return true;
     }
+
     heap_->UpdateAllocationSite(object.map(), object,
                                 local_pretenuring_feedback_);
+
     HeapObject target;
     AllocationSpace space = AllocateTargetObject(object, size, &target);
     MigrateObject(HeapObject::cast(target), object, size, space);
@@ -1427,6 +1442,7 @@ class EvacuateNewSpaceVisitor final : public EvacuateVisitorBase {
   intptr_t semispace_copied_size_;
   Heap::PretenuringFeedbackMap* local_pretenuring_feedback_;
   bool is_incremental_marking_;
+  bool always_promote_young_;
 };
 
 template <PageEvacuationMode mode>
@@ -1728,7 +1744,7 @@ void MarkCompactCollector::ProcessMarkingWorklistInternal() {
   while (!(object = marking_worklist()->Pop()).is_null()) {
     // Left trimming may result in grey or black filler objects on the marking
     // worklist. Ignore these objects.
-    if (object.IsFiller()) {
+    if (object.IsFreeSpaceOrFiller()) {
       // Due to copying mark bits and the fact that grey and black have their
       // first bit set, one word fillers are always black.
       DCHECK_IMPLIES(
@@ -2080,12 +2096,13 @@ void MarkCompactCollector::FlushBytecodeFromSFI(
   MemoryChunk* chunk = MemoryChunk::FromAddress(compiled_data_start);
 
   // Clear any recorded slots for the compiled data as being invalid.
+  DCHECK_NULL(chunk->sweeping_slot_set());
   RememberedSet<OLD_TO_NEW>::RemoveRange(
       chunk, compiled_data_start, compiled_data_start + compiled_data_size,
-      SlotSet::PREFREE_EMPTY_BUCKETS);
+      SlotSet::FREE_EMPTY_BUCKETS);
   RememberedSet<OLD_TO_OLD>::RemoveRange(
       chunk, compiled_data_start, compiled_data_start + compiled_data_size,
-      SlotSet::PREFREE_EMPTY_BUCKETS);
+      SlotSet::FREE_EMPTY_BUCKETS);
 
   // Swap the map, using set_map_after_allocation to avoid verify heap checks
   // which are not necessary since we are doing this during the GC atomic pause.
@@ -2233,12 +2250,12 @@ void MarkCompactCollector::RightTrimDescriptorArray(DescriptorArray array,
   DCHECK_LE(0, new_nof_all_descriptors);
   Address start = array.GetDescriptorSlot(new_nof_all_descriptors).address();
   Address end = array.GetDescriptorSlot(old_nof_all_descriptors).address();
-  RememberedSet<OLD_TO_NEW>::RemoveRange(MemoryChunk::FromHeapObject(array),
-                                         start, end,
-                                         SlotSet::PREFREE_EMPTY_BUCKETS);
-  RememberedSet<OLD_TO_OLD>::RemoveRange(MemoryChunk::FromHeapObject(array),
-                                         start, end,
-                                         SlotSet::PREFREE_EMPTY_BUCKETS);
+  MemoryChunk* chunk = MemoryChunk::FromHeapObject(array);
+  DCHECK_NULL(chunk->sweeping_slot_set());
+  RememberedSet<OLD_TO_NEW>::RemoveRange(chunk, start, end,
+                                         SlotSet::FREE_EMPTY_BUCKETS);
+  RememberedSet<OLD_TO_OLD>::RemoveRange(chunk, start, end,
+                                         SlotSet::FREE_EMPTY_BUCKETS);
   heap()->CreateFillerObjectAt(start, static_cast<int>(end - start),
                                ClearRecordedSlots::kNo);
   array.set_number_of_all_descriptors(new_nof_all_descriptors);
@@ -2296,7 +2313,7 @@ void MarkCompactCollector::ClearWeakCollections() {
   EphemeronHashTable table;
 
   while (weak_objects_.ephemeron_hash_tables.Pop(kMainThread, &table)) {
-    for (int i = 0; i < table.Capacity(); i++) {
+    for (InternalIndex i : table.IterateEntries()) {
       HeapObject key = HeapObject::cast(table.KeyAt(i));
 #ifdef VERIFY_HEAP
       Object value = table.ValueAt(i);
@@ -2662,6 +2679,8 @@ void MarkCompactCollector::EvacuatePrologue() {
   new_space->Flip();
   new_space->ResetLinearAllocationArea();
 
+  DCHECK_EQ(new_space->Size(), 0);
+
   heap()->new_lo_space()->Flip();
   heap()->new_lo_space()->ResetPendingObject();
 
@@ -2676,6 +2695,8 @@ void MarkCompactCollector::EvacuateEpilogue() {
   aborted_evacuation_candidates_.clear();
   // New space.
   heap()->new_space()->set_age_mark(heap()->new_space()->top());
+  DCHECK_IMPLIES(FLAG_always_promote_young_mc,
+                 heap()->new_space()->Size() == 0);
   // Deallocate unmarked large objects.
   heap()->lo_space()->FreeUnmarkedObjects();
   heap()->code_lo_space()->FreeUnmarkedObjects();
@@ -2723,18 +2744,19 @@ class Evacuator : public Malloced {
     return MemoryChunkLayout::AllocatableMemoryInDataPage() + kTaggedSize;
   }
 
-  Evacuator(Heap* heap, RecordMigratedSlotVisitor* record_visitor)
+  Evacuator(Heap* heap, RecordMigratedSlotVisitor* record_visitor,
+            LocalAllocator* local_allocator, bool always_promote_young)
       : heap_(heap),
-        local_allocator_(heap_),
         local_pretenuring_feedback_(kInitialLocalPretenuringFeedbackCapacity),
-        new_space_visitor_(heap_, &local_allocator_, record_visitor,
-                           &local_pretenuring_feedback_),
+        new_space_visitor_(heap_, local_allocator, record_visitor,
+                           &local_pretenuring_feedback_, always_promote_young),
         new_to_new_page_visitor_(heap_, record_visitor,
                                  &local_pretenuring_feedback_),
         new_to_old_page_visitor_(heap_, record_visitor,
                                  &local_pretenuring_feedback_),
 
-        old_space_visitor_(heap_, &local_allocator_, record_visitor),
+        old_space_visitor_(heap_, local_allocator, record_visitor),
+        local_allocator_(local_allocator),
         duration_(0.0),
         bytes_compacted_(0) {}
 
@@ -2770,8 +2792,6 @@ class Evacuator : public Malloced {
 
   Heap* heap_;
 
-  // Locally cached collector data.
-  LocalAllocator local_allocator_;
   Heap::PretenuringFeedbackMap local_pretenuring_feedback_;
 
   // Visitors for the corresponding spaces.
@@ -2781,6 +2801,9 @@ class Evacuator : public Malloced {
   EvacuateNewSpacePageVisitor<PageEvacuationMode::NEW_TO_OLD>
       new_to_old_page_visitor_;
   EvacuateOldSpaceVisitor old_space_visitor_;
+
+  // Locally cached collector data.
+  LocalAllocator* local_allocator_;
 
   // Book keeping info.
   double duration_;
@@ -2815,7 +2838,7 @@ void Evacuator::EvacuatePage(MemoryChunk* chunk) {
 }
 
 void Evacuator::Finalize() {
-  local_allocator_.Finalize();
+  local_allocator_->Finalize();
   heap()->tracer()->AddCompactionEvent(duration_, bytes_compacted_);
   heap()->IncrementPromotedObjectsSize(new_space_visitor_.promoted_size() +
                                        new_to_old_page_visitor_.moved_bytes());
@@ -2833,8 +2856,10 @@ void Evacuator::Finalize() {
 class FullEvacuator : public Evacuator {
  public:
   explicit FullEvacuator(MarkCompactCollector* collector)
-      : Evacuator(collector->heap(), &record_visitor_),
+      : Evacuator(collector->heap(), &record_visitor_, &local_allocator_,
+                  FLAG_always_promote_young_mc),
         record_visitor_(collector, &ephemeron_remembered_set_),
+        local_allocator_(heap_, LocalSpaceKind::kCompactionSpaceForMarkCompact),
         collector_(collector) {}
 
   GCTracer::BackgroundScope::ScopeId GetBackgroundTracingScope() override {
@@ -2866,6 +2891,7 @@ class FullEvacuator : public Evacuator {
   void RawEvacuatePage(MemoryChunk* chunk, intptr_t* live_bytes) override;
   EphemeronRememberedSet ephemeron_remembered_set_;
   RecordMigratedSlotVisitor record_visitor_;
+  LocalAllocator local_allocator_;
 
   MarkCompactCollector* collector_;
 };
@@ -3023,7 +3049,8 @@ void MarkCompactCollector::EvacuatePagesInParallel() {
     if (live_bytes_on_page == 0 && !page->contains_array_buffers()) continue;
     live_bytes += live_bytes_on_page;
     if (ShouldMovePage(page, live_bytes_on_page)) {
-      if (page->IsFlagSet(MemoryChunk::NEW_SPACE_BELOW_AGE_MARK)) {
+      if (page->IsFlagSet(MemoryChunk::NEW_SPACE_BELOW_AGE_MARK) ||
+          FLAG_always_promote_young_mc) {
         EvacuateNewSpacePageVisitor<NEW_TO_OLD>::Move(page);
         DCHECK_EQ(heap()->old_space(), page->owner());
         // The move added page->allocated_bytes to the old space, but we are
@@ -3058,6 +3085,14 @@ void MarkCompactCollector::EvacuatePagesInParallel() {
 
   CreateAndExecuteEvacuationTasks<FullEvacuator>(this, &evacuation_job, nullptr,
                                                  live_bytes);
+
+  // After evacuation there might still be swept pages that weren't
+  // added to one of the compaction space but still reside in the
+  // sweeper's swept_list_. Merge remembered sets for those pages as
+  // well such that after mark-compact all pages either store slots
+  // in the sweeping or old-to-new remembered set.
+  sweeper()->MergeOldToNewRememberedSetsForSweptPages();
+
   PostProcessEvacuationCandidates();
 }
 
@@ -3336,7 +3371,7 @@ class ToSpaceUpdatingItem : public UpdatingItem {
   MarkingState* marking_state_;
 };
 
-template <typename MarkingState>
+template <typename MarkingState, GarbageCollector collector>
 class RememberedSetUpdatingItem : public UpdatingItem {
  public:
   explicit RememberedSetUpdatingItem(Heap* heap, MarkingState* marking_state,
@@ -3411,15 +3446,60 @@ class RememberedSetUpdatingItem : public UpdatingItem {
 
   void UpdateUntypedPointers() {
     if (chunk_->slot_set<OLD_TO_NEW, AccessMode::NON_ATOMIC>() != nullptr) {
-      RememberedSet<OLD_TO_NEW>::Iterate(
+      DCHECK_IMPLIES(
+          collector == MARK_COMPACTOR,
+          chunk_->SweepingDone() &&
+              chunk_->sweeping_slot_set<AccessMode::NON_ATOMIC>() == nullptr);
+
+      InvalidatedSlotsFilter filter = InvalidatedSlotsFilter::OldToNew(chunk_);
+      int slots = RememberedSet<OLD_TO_NEW>::Iterate(
           chunk_,
-          [this](MaybeObjectSlot slot) {
+          [this, &filter](MaybeObjectSlot slot) {
+            if (!filter.IsValid(slot.address())) return REMOVE_SLOT;
             return CheckAndUpdateOldToNewSlot(slot);
           },
-          SlotSet::PREFREE_EMPTY_BUCKETS);
+          SlotSet::FREE_EMPTY_BUCKETS);
+
+      DCHECK_IMPLIES(
+          collector == MARK_COMPACTOR && FLAG_always_promote_young_mc,
+          slots == 0);
+
+      if (slots == 0) {
+        chunk_->ReleaseSlotSet<OLD_TO_NEW>();
+      }
     }
 
-    DCHECK_NULL(chunk_->invalidated_slots<OLD_TO_NEW>());
+    if (chunk_->sweeping_slot_set<AccessMode::NON_ATOMIC>()) {
+      DCHECK_IMPLIES(
+          collector == MARK_COMPACTOR,
+          !chunk_->SweepingDone() &&
+              (chunk_->slot_set<OLD_TO_NEW, AccessMode::NON_ATOMIC>()) ==
+                  nullptr);
+      DCHECK(!chunk_->IsLargePage());
+
+      InvalidatedSlotsFilter filter = InvalidatedSlotsFilter::OldToNew(chunk_);
+      int slots = RememberedSetSweeping::Iterate(
+          chunk_,
+          [this, &filter](MaybeObjectSlot slot) {
+            if (!filter.IsValid(slot.address())) return REMOVE_SLOT;
+            return CheckAndUpdateOldToNewSlot(slot);
+          },
+          SlotSet::FREE_EMPTY_BUCKETS);
+
+      DCHECK_IMPLIES(
+          collector == MARK_COMPACTOR && FLAG_always_promote_young_mc,
+          slots == 0);
+
+      if (slots == 0) {
+        chunk_->ReleaseSweepingSlotSet();
+      }
+    }
+
+    if (chunk_->invalidated_slots<OLD_TO_NEW>() != nullptr) {
+      // The invalidated slots are not needed after old-to-new slots were
+      // processed.
+      chunk_->ReleaseInvalidatedSlots<OLD_TO_NEW>();
+    }
 
     if ((updating_mode_ == RememberedSetUpdatingMode::ALL) &&
         (chunk_->slot_set<OLD_TO_OLD, AccessMode::NON_ATOMIC>() != nullptr)) {
@@ -3430,17 +3510,11 @@ class RememberedSetUpdatingItem : public UpdatingItem {
             if (!filter.IsValid(slot.address())) return REMOVE_SLOT;
             return UpdateSlot<AccessMode::NON_ATOMIC>(slot);
           },
-          SlotSet::PREFREE_EMPTY_BUCKETS);
+          SlotSet::FREE_EMPTY_BUCKETS);
+      chunk_->ReleaseSlotSet<OLD_TO_OLD>();
     }
     if ((updating_mode_ == RememberedSetUpdatingMode::ALL) &&
         chunk_->invalidated_slots<OLD_TO_OLD>() != nullptr) {
-#ifdef DEBUG
-      for (auto object_size : *chunk_->invalidated_slots<OLD_TO_OLD>()) {
-        HeapObject object = object_size.first;
-        int size = object_size.second;
-        DCHECK_LE(object.SizeFromMap(object.map()), size);
-      }
-#endif
       // The invalidated slots are not needed after old-to-old slots were
       // processsed.
       chunk_->ReleaseInvalidatedSlots<OLD_TO_OLD>();
@@ -3490,7 +3564,7 @@ UpdatingItem* MarkCompactCollector::CreateToSpaceUpdatingItem(
 
 UpdatingItem* MarkCompactCollector::CreateRememberedSetUpdatingItem(
     MemoryChunk* chunk, RememberedSetUpdatingMode updating_mode) {
-  return new RememberedSetUpdatingItem<NonAtomicMarkingState>(
+  return new RememberedSetUpdatingItem<NonAtomicMarkingState, MARK_COMPACTOR>(
       heap(), non_atomic_marking_state(), chunk, updating_mode);
 }
 
@@ -3557,15 +3631,18 @@ int MarkCompactCollectorBase::CollectRememberedSetUpdatingItems(
     const bool contains_old_to_new_slots =
         chunk->slot_set<OLD_TO_NEW>() != nullptr ||
         chunk->typed_slot_set<OLD_TO_NEW>() != nullptr;
+    const bool contains_old_to_new_sweeping_slots =
+        chunk->sweeping_slot_set() != nullptr;
     const bool contains_old_to_old_invalidated_slots =
         chunk->invalidated_slots<OLD_TO_OLD>() != nullptr;
     const bool contains_old_to_new_invalidated_slots =
         chunk->invalidated_slots<OLD_TO_NEW>() != nullptr;
-    if (!contains_old_to_new_slots && !contains_old_to_old_slots &&
-        !contains_old_to_old_invalidated_slots &&
+    if (!contains_old_to_new_slots && !contains_old_to_new_sweeping_slots &&
+        !contains_old_to_old_slots && !contains_old_to_old_invalidated_slots &&
         !contains_old_to_new_invalidated_slots)
       continue;
     if (mode == RememberedSetUpdatingMode::ALL || contains_old_to_new_slots ||
+        contains_old_to_new_sweeping_slots ||
         contains_old_to_old_invalidated_slots ||
         contains_old_to_new_invalidated_slots) {
       job->AddItem(CreateRememberedSetUpdatingItem(chunk, mode));
@@ -3639,8 +3716,8 @@ class EphemeronTableUpdatingItem : public UpdatingItem {
       DCHECK(table.Object::IsEphemeronHashTable());
       for (auto iti = indices.begin(); iti != indices.end();) {
         // EphemeronHashTable keys must be heap objects.
-        HeapObjectSlot key_slot(
-            table.RawFieldOfElementAt(EphemeronHashTable::EntryToIndex(*iti)));
+        HeapObjectSlot key_slot(table.RawFieldOfElementAt(
+            EphemeronHashTable::EntryToIndex(InternalIndex(*iti))));
         HeapObject key = key_slot.ToHeapObject();
         MapWord map_word = key.map_word();
         if (map_word.IsForwardingAddress()) {
@@ -3773,11 +3850,22 @@ void MarkCompactCollector::PostProcessEvacuationCandidates() {
     // might not have recorded them in first place.
 
     // Remove outdated slots.
+    RememberedSetSweeping::RemoveRange(page, page->address(),
+                                       failed_object.address(),
+                                       SlotSet::FREE_EMPTY_BUCKETS);
     RememberedSet<OLD_TO_NEW>::RemoveRange(page, page->address(),
                                            failed_object.address(),
-                                           SlotSet::PREFREE_EMPTY_BUCKETS);
+                                           SlotSet::FREE_EMPTY_BUCKETS);
     RememberedSet<OLD_TO_NEW>::RemoveRangeTyped(page, page->address(),
                                                 failed_object.address());
+
+    // Remove invalidated slots.
+    if (failed_object.address() > page->area_start()) {
+      InvalidatedSlotsCleanup old_to_new_cleanup =
+          InvalidatedSlotsCleanup::OldToNew(page);
+      old_to_new_cleanup.Free(page->area_start(), failed_object.address());
+    }
+
     // Recompute live bytes.
     LiveObjectVisitor::RecomputeLiveBytes(page, non_atomic_marking_state());
     // Re-record slots.
@@ -4202,8 +4290,9 @@ class YoungGenerationRecordMigratedSlotVisitor final
         DCHECK_IMPLIES(
             p->IsToPage(),
             p->IsFlagSet(Page::PAGE_NEW_NEW_PROMOTION) || p->IsLargePage());
-        RememberedSet<OLD_TO_NEW>::Insert<AccessMode::NON_ATOMIC>(
-            MemoryChunk::FromHeapObject(host), slot);
+        MemoryChunk* chunk = MemoryChunk::FromHeapObject(host);
+        DCHECK(chunk->SweepingDone());
+        RememberedSet<OLD_TO_NEW>::Insert<AccessMode::NON_ATOMIC>(chunk, slot);
       } else if (p->IsEvacuationCandidate() && IsLive(host)) {
         RememberedSet<OLD_TO_OLD>::Insert<AccessMode::NON_ATOMIC>(
             MemoryChunk::FromHeapObject(host), slot);
@@ -4347,15 +4436,6 @@ void MinorMarkCompactCollector::CollectGarbage() {
     // TODO(ulan): Don't free all as soon as we have an intermediate generation.
     heap()->new_lo_space()->FreeDeadObjects([](HeapObject) { return true; });
   }
-
-  RememberedSet<OLD_TO_NEW>::IterateMemoryChunks(
-      heap(), [](MemoryChunk* chunk) {
-        if (chunk->SweepingDone()) {
-          RememberedSet<OLD_TO_NEW>::FreeEmptyBuckets(chunk);
-        } else {
-          RememberedSet<OLD_TO_NEW>::PreFreeEmptyBuckets(chunk);
-        }
-      });
 
   heap()->account_external_memory_concurrently_freed();
 }
@@ -4522,7 +4602,8 @@ UpdatingItem* MinorMarkCompactCollector::CreateToSpaceUpdatingItem(
 
 UpdatingItem* MinorMarkCompactCollector::CreateRememberedSetUpdatingItem(
     MemoryChunk* chunk, RememberedSetUpdatingMode updating_mode) {
-  return new RememberedSetUpdatingItem<NonAtomicMarkingState>(
+  return new RememberedSetUpdatingItem<NonAtomicMarkingState,
+                                       MINOR_MARK_COMPACTOR>(
       heap(), non_atomic_marking_state(), chunk, updating_mode);
 }
 
@@ -4651,7 +4732,15 @@ class PageMarkingItem : public MarkingItem {
           if (!filter.IsValid(slot.address())) return REMOVE_SLOT;
           return CheckAndMarkObject(task, slot);
         },
-        SlotSet::PREFREE_EMPTY_BUCKETS);
+        SlotSet::FREE_EMPTY_BUCKETS);
+    filter = InvalidatedSlotsFilter::OldToNew(chunk_);
+    RememberedSetSweeping::Iterate(
+        chunk_,
+        [this, task, &filter](MaybeObjectSlot slot) {
+          if (!filter.IsValid(slot.address())) return REMOVE_SLOT;
+          return CheckAndMarkObject(task, slot);
+        },
+        SlotSet::FREE_EMPTY_BUCKETS);
   }
 
   void MarkTypedPointers(YoungGenerationMarkingTask* task) {
@@ -4762,7 +4851,7 @@ void MinorMarkCompactCollector::ProcessMarkingWorklist() {
   MarkingWorklist::View marking_worklist(worklist(), kMainMarker);
   HeapObject object;
   while (marking_worklist.Pop(&object)) {
-    DCHECK(!object.IsFiller());
+    DCHECK(!object.IsFreeSpaceOrFiller());
     DCHECK(object.IsHeapObject());
     DCHECK(heap()->Contains(object));
     DCHECK(non_atomic_marking_state()->IsGrey(object));
@@ -4819,8 +4908,11 @@ namespace {
 class YoungGenerationEvacuator : public Evacuator {
  public:
   explicit YoungGenerationEvacuator(MinorMarkCompactCollector* collector)
-      : Evacuator(collector->heap(), &record_visitor_),
+      : Evacuator(collector->heap(), &record_visitor_, &local_allocator_,
+                  false),
         record_visitor_(collector->heap()->mark_compact_collector()),
+        local_allocator_(heap_,
+                         LocalSpaceKind::kCompactionSpaceForMinorMarkCompact),
         collector_(collector) {}
 
   GCTracer::BackgroundScope::ScopeId GetBackgroundTracingScope() override {
@@ -4835,6 +4927,7 @@ class YoungGenerationEvacuator : public Evacuator {
   void RawEvacuatePage(MemoryChunk* chunk, intptr_t* live_bytes) override;
 
   YoungGenerationRecordMigratedSlotVisitor record_visitor_;
+  LocalAllocator local_allocator_;
   MinorMarkCompactCollector* collector_;
 };
 

@@ -9,6 +9,7 @@
 #include "src/base/enum-set.h"
 #include "src/base/flags.h"
 #include "src/codegen/machine-type.h"
+#include "src/compiler/globals.h"
 #include "src/compiler/write-barrier-kind.h"
 #include "src/zone/zone.h"
 
@@ -114,6 +115,8 @@ MachineType AtomicOpType(Operator const* op) V8_WARN_UNUSED_RESULT;
 
 V8_EXPORT_PRIVATE const uint8_t* S8x16ShuffleOf(Operator const* op)
     V8_WARN_UNUSED_RESULT;
+
+StackCheckKind StackCheckKindOf(Operator const* op) V8_WARN_UNUSED_RESULT;
 
 // Interface for building machine-level operators. These operators are
 // machine-level but machine-independent and thus define a language suitable
@@ -239,6 +242,7 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const OptionalOperator Word64ReverseBits();
   const Operator* Word32ReverseBytes();
   const Operator* Word64ReverseBytes();
+  const Operator* Simd128ReverseBytes();
   const OptionalOperator Int32AbsWithOverflow();
   const OptionalOperator Int64AbsWithOverflow();
 
@@ -301,8 +305,13 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   // This operator reinterprets the bits of a tagged pointer as a word.
   const Operator* BitcastTaggedToWord();
 
-  // This operator reinterprets the bits of a Smi as a word.
-  const Operator* BitcastTaggedSignedToWord();
+  // This operator reinterprets the bits of a tagged value as a word preserving
+  // non-pointer bits (all the bits that are not modified by GC):
+  // 1) smi tag
+  // 2) weak tag
+  // 3) smi payload if the tagged value is a smi.
+  // Note, that it's illegal to "look" at the pointer bits of non-smi values.
+  const Operator* BitcastTaggedToWordForTagAndSmiBits();
 
   // This operator reinterprets the bits of a tagged MaybeObject pointer as
   // word.
@@ -475,8 +484,11 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
 
   // SIMD operators.
   const Operator* F64x2Splat();
+  const Operator* F64x2SConvertI64x2();
+  const Operator* F64x2UConvertI64x2();
   const Operator* F64x2Abs();
   const Operator* F64x2Neg();
+  const Operator* F64x2Sqrt();
   const Operator* F64x2Add();
   const Operator* F64x2Sub();
   const Operator* F64x2Mul();
@@ -489,6 +501,8 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* F64x2Ne();
   const Operator* F64x2Lt();
   const Operator* F64x2Le();
+  const Operator* F64x2Qfma();
+  const Operator* F64x2Qfms();
 
   const Operator* F32x4Splat();
   const Operator* F32x4ExtractLane(int32_t);
@@ -497,6 +511,7 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* F32x4UConvertI32x4();
   const Operator* F32x4Abs();
   const Operator* F32x4Neg();
+  const Operator* F32x4Sqrt();
   const Operator* F32x4RecipApprox();
   const Operator* F32x4RecipSqrtApprox();
   const Operator* F32x4Add();
@@ -510,10 +525,14 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* F32x4Ne();
   const Operator* F32x4Lt();
   const Operator* F32x4Le();
+  const Operator* F32x4Qfma();
+  const Operator* F32x4Qfms();
 
   const Operator* I64x2Splat();
+  const Operator* I64x2SplatI32Pair();
   const Operator* I64x2ExtractLane(int32_t);
   const Operator* I64x2ReplaceLane(int32_t);
+  const Operator* I64x2ReplaceLaneI32Pair(int32_t);
   const Operator* I64x2Neg();
   const Operator* I64x2Shl();
   const Operator* I64x2ShrS();
@@ -632,6 +651,7 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* S128Not();
   const Operator* S128Select();
 
+  const Operator* S8x16Swizzle();
   const Operator* S8x16Shuffle(const uint8_t shuffle[16]);
 
   const Operator* S1x2AnyTrue();
@@ -670,8 +690,14 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* LoadFramePointer();
   const Operator* LoadParentFramePointer();
 
-  // Compares: stack_pointer > value.
-  const Operator* StackPointerGreaterThan();
+  // Compares: stack_pointer [- offset] > value. The offset is optionally
+  // applied for kFunctionEntry stack checks.
+  const Operator* StackPointerGreaterThan(StackCheckKind kind);
+
+  // Loads the offset that should be applied to the current stack
+  // pointer before a stack check. Used as input to the
+  // Runtime::kStackGuardWithGap call.
+  const Operator* LoadStackCheckOffset();
 
   // Memory barrier.
   const Operator* MemBarrier();

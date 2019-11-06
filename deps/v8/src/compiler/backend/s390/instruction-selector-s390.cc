@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "src/base/adapters.h"
 #include "src/compiler/backend/instruction-selector-impl.h"
 #include "src/compiler/node-matchers.h"
 #include "src/compiler/node-properties.h"
@@ -436,68 +435,64 @@ void VisitTryTruncateDouble(InstructionSelector* selector, ArchOpcode opcode,
 #endif
 
 template <class CanCombineWithLoad>
-void GenerateRightOperands(
-    InstructionSelector* selector, Node* node, Node* right,
-    InstructionCode& opcode,     // NOLINT(runtime/references)
-    OperandModes& operand_mode,  // NOLINT(runtime/references)
-    InstructionOperand* inputs,
-    size_t& input_count,  // NOLINT(runtime/references)
-    CanCombineWithLoad canCombineWithLoad) {
+void GenerateRightOperands(InstructionSelector* selector, Node* node,
+                           Node* right, InstructionCode* opcode,
+                           OperandModes* operand_mode,
+                           InstructionOperand* inputs, size_t* input_count,
+                           CanCombineWithLoad canCombineWithLoad) {
   S390OperandGenerator g(selector);
 
-  if ((operand_mode & OperandMode::kAllowImmediate) &&
-      g.CanBeImmediate(right, operand_mode)) {
-    inputs[input_count++] = g.UseImmediate(right);
+  if ((*operand_mode & OperandMode::kAllowImmediate) &&
+      g.CanBeImmediate(right, *operand_mode)) {
+    inputs[(*input_count)++] = g.UseImmediate(right);
     // Can only be RI or RRI
-    operand_mode &= OperandMode::kAllowImmediate;
-  } else if (operand_mode & OperandMode::kAllowMemoryOperand) {
+    *operand_mode &= OperandMode::kAllowImmediate;
+  } else if (*operand_mode & OperandMode::kAllowMemoryOperand) {
     NodeMatcher mright(right);
     if (mright.IsLoad() && selector->CanCover(node, right) &&
         canCombineWithLoad(SelectLoadOpcode(right))) {
       AddressingMode mode = g.GetEffectiveAddressMemoryOperand(
-          right, inputs, &input_count, OpcodeImmMode(opcode));
-      opcode |= AddressingModeField::encode(mode);
-      operand_mode &= ~OperandMode::kAllowImmediate;
-      if (operand_mode & OperandMode::kAllowRM)
-        operand_mode &= ~OperandMode::kAllowDistinctOps;
-    } else if (operand_mode & OperandMode::kAllowRM) {
-      DCHECK(!(operand_mode & OperandMode::kAllowRRM));
-      inputs[input_count++] = g.UseAnyExceptImmediate(right);
+          right, inputs, input_count, OpcodeImmMode(*opcode));
+      *opcode |= AddressingModeField::encode(mode);
+      *operand_mode &= ~OperandMode::kAllowImmediate;
+      if (*operand_mode & OperandMode::kAllowRM)
+        *operand_mode &= ~OperandMode::kAllowDistinctOps;
+    } else if (*operand_mode & OperandMode::kAllowRM) {
+      DCHECK(!(*operand_mode & OperandMode::kAllowRRM));
+      inputs[(*input_count)++] = g.UseAnyExceptImmediate(right);
       // Can not be Immediate
-      operand_mode &=
+      *operand_mode &=
           ~OperandMode::kAllowImmediate & ~OperandMode::kAllowDistinctOps;
-    } else if (operand_mode & OperandMode::kAllowRRM) {
-      DCHECK(!(operand_mode & OperandMode::kAllowRM));
-      inputs[input_count++] = g.UseAnyExceptImmediate(right);
+    } else if (*operand_mode & OperandMode::kAllowRRM) {
+      DCHECK(!(*operand_mode & OperandMode::kAllowRM));
+      inputs[(*input_count)++] = g.UseAnyExceptImmediate(right);
       // Can not be Immediate
-      operand_mode &= ~OperandMode::kAllowImmediate;
+      *operand_mode &= ~OperandMode::kAllowImmediate;
     } else {
       UNREACHABLE();
     }
   } else {
-    inputs[input_count++] = g.UseRegister(right);
+    inputs[(*input_count)++] = g.UseRegister(right);
     // Can only be RR or RRR
-    operand_mode &= OperandMode::kAllowRRR;
+    *operand_mode &= OperandMode::kAllowRRR;
   }
 }
 
 template <class CanCombineWithLoad>
-void GenerateBinOpOperands(
-    InstructionSelector* selector, Node* node, Node* left, Node* right,
-    InstructionCode& opcode,     // NOLINT(runtime/references)
-    OperandModes& operand_mode,  // NOLINT(runtime/references)
-    InstructionOperand* inputs,
-    size_t& input_count,  // NOLINT(runtime/references)
-    CanCombineWithLoad canCombineWithLoad) {
+void GenerateBinOpOperands(InstructionSelector* selector, Node* node,
+                           Node* left, Node* right, InstructionCode* opcode,
+                           OperandModes* operand_mode,
+                           InstructionOperand* inputs, size_t* input_count,
+                           CanCombineWithLoad canCombineWithLoad) {
   S390OperandGenerator g(selector);
   // left is always register
   InstructionOperand const left_input = g.UseRegister(left);
-  inputs[input_count++] = left_input;
+  inputs[(*input_count)++] = left_input;
 
   if (left == right) {
-    inputs[input_count++] = left_input;
+    inputs[(*input_count)++] = left_input;
     // Can only be RR or RRR
-    operand_mode &= OperandMode::kAllowRRR;
+    *operand_mode &= OperandMode::kAllowRRR;
   } else {
     GenerateRightOperands(selector, node, right, opcode, operand_mode, inputs,
                           input_count, canCombineWithLoad);
@@ -575,8 +570,8 @@ void VisitUnaryOp(InstructionSelector* selector, Node* node,
   size_t output_count = 0;
   Node* input = node->InputAt(0);
 
-  GenerateRightOperands(selector, node, input, opcode, operand_mode, inputs,
-                        input_count, canCombineWithLoad);
+  GenerateRightOperands(selector, node, input, &opcode, &operand_mode, inputs,
+                        &input_count, canCombineWithLoad);
 
   bool input_is_word32 = ProduceWord32Result(input);
 
@@ -631,8 +626,8 @@ void VisitBinOp(InstructionSelector* selector, Node* node,
     std::swap(left, right);
   }
 
-  GenerateBinOpOperands(selector, node, left, right, opcode, operand_mode,
-                        inputs, input_count, canCombineWithLoad);
+  GenerateBinOpOperands(selector, node, left, right, &opcode, &operand_mode,
+                        inputs, &input_count, canCombineWithLoad);
 
   bool left_is_word32 = ProduceWord32Result(left);
 
@@ -829,11 +824,31 @@ void InstructionSelector::VisitUnalignedStore(Node* node) { UNREACHABLE(); }
 
 void InstructionSelector::VisitStackPointerGreaterThan(
     Node* node, FlagsContinuation* cont) {
-  Node* const value = node->InputAt(0);
-  InstructionCode opcode = kArchStackPointerGreaterThan;
+  StackCheckKind kind = StackCheckKindOf(node->op());
+  InstructionCode opcode =
+      kArchStackPointerGreaterThan | MiscField::encode(static_cast<int>(kind));
 
   S390OperandGenerator g(this);
-  EmitWithContinuation(opcode, g.UseRegister(value), cont);
+
+  // No outputs.
+  InstructionOperand* const outputs = nullptr;
+  const int output_count = 0;
+
+  // Applying an offset to this stack check requires a temp register. Offsets
+  // are only applied to the first stack check. If applying an offset, we must
+  // ensure the input and temp registers do not alias, thus kUniqueRegister.
+  InstructionOperand temps[] = {g.TempRegister()};
+  const int temp_count = (kind == StackCheckKind::kJSFunctionEntry) ? 1 : 0;
+  const auto register_mode = (kind == StackCheckKind::kJSFunctionEntry)
+                                 ? OperandGenerator::kUniqueRegister
+                                 : OperandGenerator::kRegister;
+
+  Node* const value = node->InputAt(0);
+  InstructionOperand inputs[] = {g.UseRegisterWithMode(value, register_mode)};
+  static constexpr int input_count = arraysize(inputs);
+
+  EmitWithContinuation(opcode, output_count, outputs, input_count, inputs,
+                       temp_count, temps, cont);
 }
 
 #if 0
@@ -1172,6 +1187,25 @@ void InstructionSelector::VisitWord32ReverseBytes(Node* node) {
     }
   }
   Emit(kS390_LoadReverse32RR, g.DefineAsRegister(node),
+       g.UseRegister(node->InputAt(0)));
+}
+
+void InstructionSelector::VisitSimd128ReverseBytes(Node* node) {
+  S390OperandGenerator g(this);
+  NodeMatcher input(node->InputAt(0));
+  if (CanCover(node, input.node()) && input.IsLoad()) {
+    LoadRepresentation load_rep = LoadRepresentationOf(input.node()->op());
+    if (load_rep.representation() == MachineRepresentation::kSimd128) {
+      Node* base = input.node()->InputAt(0);
+      Node* offset = input.node()->InputAt(1);
+      Emit(kS390_LoadReverseSimd128 | AddressingModeField::encode(kMode_MRR),
+           // TODO(miladfar): one of the base and offset can be imm.
+           g.DefineAsRegister(node), g.UseRegister(base),
+           g.UseRegister(offset));
+      return;
+    }
+  }
+  Emit(kS390_LoadReverseSimd128RR, g.DefineAsRegister(node),
        g.UseRegister(node->InputAt(0)));
 }
 
@@ -2691,6 +2725,8 @@ void InstructionSelector::VisitF32x4Sub(Node* node) { UNIMPLEMENTED(); }
 
 void InstructionSelector::VisitF32x4Mul(Node* node) { UNIMPLEMENTED(); }
 
+void InstructionSelector::VisitF32x4Sqrt(Node* node) { UNIMPLEMENTED(); }
+
 void InstructionSelector::VisitF32x4Div(Node* node) { UNIMPLEMENTED(); }
 
 void InstructionSelector::VisitF32x4Min(Node* node) { UNIMPLEMENTED(); }
@@ -2797,6 +2833,28 @@ void InstructionSelector::VisitI8x16ShrU(Node* node) { UNIMPLEMENTED(); }
 void InstructionSelector::VisitI8x16Mul(Node* node) { UNIMPLEMENTED(); }
 
 void InstructionSelector::VisitS8x16Shuffle(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitS8x16Swizzle(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF64x2Splat(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF64x2ExtractLane(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF64x2ReplaceLane(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF64x2Abs(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF64x2Neg(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF64x2Sqrt(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF64x2Add(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF64x2Sub(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF64x2Mul(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF64x2Div(Node* node) { UNIMPLEMENTED(); }
 
 // static
 MachineOperatorBuilder::Flags

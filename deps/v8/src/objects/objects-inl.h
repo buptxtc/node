@@ -74,15 +74,6 @@ DEF_GETTER(HeapObject, IsJSSloppyArgumentsObject, bool) {
   return IsJSArgumentsObject(isolate);
 }
 
-DEF_GETTER(HeapObject, IsJSGeneratorObject, bool) {
-  return map(isolate).instance_type() == JS_GENERATOR_OBJECT_TYPE ||
-         IsJSAsyncFunctionObject(isolate) || IsJSAsyncGeneratorObject(isolate);
-}
-
-DEF_GETTER(HeapObject, IsDataHandler, bool) {
-  return IsLoadHandler(isolate) || IsStoreHandler(isolate);
-}
-
 DEF_GETTER(HeapObject, IsClassBoilerplate, bool) {
   return IsFixedArrayExact(isolate);
 }
@@ -192,10 +183,6 @@ DEF_GETTER(HeapObject, IsSourceTextModuleInfo, bool) {
   return map(isolate) == GetReadOnlyRoots(isolate).module_info_map();
 }
 
-DEF_GETTER(HeapObject, IsTemplateInfo, bool) {
-  return IsObjectTemplateInfo(isolate) || IsFunctionTemplateInfo(isolate);
-}
-
 DEF_GETTER(HeapObject, IsConsString, bool) {
   if (!IsString(isolate)) return false;
   return StringShape(String::cast(*this).map(isolate)).IsCons();
@@ -268,22 +255,9 @@ bool Object::IsNumeric(Isolate* isolate) const {
   return IsNumber(isolate) || IsBigInt(isolate);
 }
 
-DEF_GETTER(HeapObject, IsFiller, bool) {
+DEF_GETTER(HeapObject, IsFreeSpaceOrFiller, bool) {
   InstanceType instance_type = map(isolate).instance_type();
   return instance_type == FREE_SPACE_TYPE || instance_type == FILLER_TYPE;
-}
-
-DEF_GETTER(HeapObject, IsJSWeakCollection, bool) {
-  return IsJSWeakMap(isolate) || IsJSWeakSet(isolate);
-}
-
-DEF_GETTER(HeapObject, IsJSCollection, bool) {
-  return IsJSMap(isolate) || IsJSSet(isolate);
-}
-
-DEF_GETTER(HeapObject, IsPromiseReactionJobTask, bool) {
-  return IsPromiseFulfillReactionJobTask(isolate) ||
-         IsPromiseRejectReactionJobTask(isolate);
 }
 
 DEF_GETTER(HeapObject, IsFrameArray, bool) {
@@ -350,6 +324,13 @@ DEF_GETTER(HeapObject, IsDependentCode, bool) {
   return true;
 }
 
+DEF_GETTER(HeapObject, IsOSROptimizedCodeCache, bool) {
+  if (!IsWeakFixedArray(isolate)) return false;
+  // There's actually no way to see the difference between a weak fixed array
+  // and a osr optimized code cache.
+  return true;
+}
+
 DEF_GETTER(HeapObject, IsAbstractCode, bool) {
   return IsBytecodeArray(isolate) || IsCode(isolate);
 }
@@ -384,14 +365,6 @@ DEF_GETTER(HeapObject, IsSymbolWrapper, bool) {
          JSPrimitiveWrapper::cast(*this).value().IsSymbol(isolate);
 }
 
-DEF_GETTER(HeapObject, IsJSArrayBufferView, bool) {
-  return IsJSDataView(isolate) || IsJSTypedArray(isolate);
-}
-
-DEF_GETTER(HeapObject, IsJSCollectionIterator, bool) {
-  return IsJSMapIterator(isolate) || IsJSSetIterator(isolate);
-}
-
 DEF_GETTER(HeapObject, IsStringSet, bool) { return IsHashTable(isolate); }
 
 DEF_GETTER(HeapObject, IsObjectHashSet, bool) { return IsHashTable(isolate); }
@@ -406,9 +379,10 @@ DEF_GETTER(HeapObject, IsObjectHashTable, bool) { return IsHashTable(isolate); }
 
 DEF_GETTER(HeapObject, IsHashTableBase, bool) { return IsHashTable(isolate); }
 
-DEF_GETTER(HeapObject, IsSmallOrderedHashTable, bool) {
-  return IsSmallOrderedHashSet(isolate) || IsSmallOrderedHashMap(isolate) ||
-         IsSmallOrderedNameDictionary(isolate);
+DEF_GETTER(HeapObject, IsWasmExceptionPackage, bool) {
+  // It is not possible to check for the existence of certain properties on the
+  // underlying {JSReceiver} here because that requires calling handlified code.
+  return IsJSReceiver(isolate);
 }
 
 bool Object::IsPrimitive() const {
@@ -444,38 +418,13 @@ DEF_GETTER(HeapObject, IsAccessCheckNeeded, bool) {
   return map(isolate).is_access_check_needed();
 }
 
-DEF_GETTER(HeapObject, IsStruct, bool) {
-  switch (map(isolate).instance_type()) {
-#define MAKE_STRUCT_CASE(TYPE, Name, name) \
-  case TYPE:                               \
-    return true;
-    STRUCT_LIST(MAKE_STRUCT_CASE)
-#undef MAKE_STRUCT_CASE
-    // It is hard to include ALLOCATION_SITE_TYPE in STRUCT_LIST because
-    // that macro is used for many things and AllocationSite needs a few
-    // special cases.
-    case ALLOCATION_SITE_TYPE:
-      return true;
-    case LOAD_HANDLER_TYPE:
-    case STORE_HANDLER_TYPE:
-      return true;
-    case FEEDBACK_CELL_TYPE:
-      return true;
-    case CALL_HANDLER_INFO_TYPE:
-      return true;
-    default:
-      return false;
-  }
-}
-
 #define MAKE_STRUCT_PREDICATE(NAME, Name, name)                         \
   bool Object::Is##Name() const {                                       \
     return IsHeapObject() && HeapObject::cast(*this).Is##Name();        \
   }                                                                     \
   bool Object::Is##Name(Isolate* isolate) const {                       \
     return IsHeapObject() && HeapObject::cast(*this).Is##Name(isolate); \
-  }                                                                     \
-  TYPE_CHECKER(Name)
+  }
 STRUCT_LIST(MAKE_STRUCT_PREDICATE)
 #undef MAKE_STRUCT_PREDICATE
 
@@ -506,13 +455,14 @@ bool Object::IsMinusZero() const {
 
 OBJECT_CONSTRUCTORS_IMPL(RegExpMatchInfo, FixedArray)
 OBJECT_CONSTRUCTORS_IMPL(ScopeInfo, FixedArray)
-OBJECT_CONSTRUCTORS_IMPL(BigIntBase, HeapObject)
+OBJECT_CONSTRUCTORS_IMPL(BigIntBase, PrimitiveHeapObject)
 OBJECT_CONSTRUCTORS_IMPL(BigInt, BigIntBase)
 OBJECT_CONSTRUCTORS_IMPL(FreshlyAllocatedBigInt, BigIntBase)
 
 // ------------------------------------
 // Cast operations
 
+CAST_ACCESSOR(BigIntBase)
 CAST_ACCESSOR(BigInt)
 CAST_ACCESSOR(RegExpMatchInfo)
 CAST_ACCESSOR(ScopeInfo)
@@ -756,11 +706,13 @@ void HeapObject::set_map(Map value) {
 #endif
   }
   set_map_word(MapWord::FromMap(value));
+#ifndef V8_DISABLE_WRITE_BARRIERS
   if (!value.is_null()) {
     // TODO(1600) We are passing kNullAddress as a slot because maps can never
     // be on an evacuation candidate.
     MarkingBarrier(*this, ObjectSlot(kNullAddress), value);
   }
+#endif
 }
 
 DEF_GETTER(HeapObject, synchronized_map, Map) {
@@ -774,11 +726,13 @@ void HeapObject::synchronized_set_map(Map value) {
 #endif
   }
   synchronized_set_map_word(MapWord::FromMap(value));
+#ifndef V8_DISABLE_WRITE_BARRIERS
   if (!value.is_null()) {
     // TODO(1600) We are passing kNullAddress as a slot because maps can never
     // be on an evacuation candidate.
     MarkingBarrier(*this, ObjectSlot(kNullAddress), value);
   }
+#endif
 }
 
 // Unsafe accessor omitting write barrier.
@@ -793,12 +747,14 @@ void HeapObject::set_map_no_write_barrier(Map value) {
 
 void HeapObject::set_map_after_allocation(Map value, WriteBarrierMode mode) {
   set_map_word(MapWord::FromMap(value));
+#ifndef V8_DISABLE_WRITE_BARRIERS
   if (mode != SKIP_WRITE_BARRIER) {
     DCHECK(!value.is_null());
     // TODO(1600) We are passing kNullAddress as a slot because maps can never
     // be on an evacuation candidate.
     MarkingBarrier(*this, ObjectSlot(kNullAddress), value);
   }
+#endif
 }
 
 ObjectSlot HeapObject::map_slot() const {

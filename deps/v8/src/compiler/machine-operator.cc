@@ -29,8 +29,7 @@ size_t hash_value(StoreRepresentation rep) {
 
 
 std::ostream& operator<<(std::ostream& os, StoreRepresentation rep) {
-  return os << "(" << rep.representation() << " : " << rep.write_barrier_kind()
-            << ")";
+  return os << rep.representation() << ", " << rep.write_barrier_kind();
 }
 
 
@@ -71,7 +70,7 @@ size_t hash_value(StackSlotRepresentation rep) {
 }
 
 std::ostream& operator<<(std::ostream& os, StackSlotRepresentation rep) {
-  return os << "(" << rep.size() << " : " << rep.alignment() << ")";
+  return os << rep.size() << ", " << rep.alignment();
 }
 
 StackSlotRepresentation const& StackSlotRepresentationOf(Operator const* op) {
@@ -146,7 +145,8 @@ MachineType AtomicOpType(Operator const* op) {
   V(Word64Clz, Operator::kNoProperties, 1, 0, 1)                              \
   V(Word32ReverseBytes, Operator::kNoProperties, 1, 0, 1)                     \
   V(Word64ReverseBytes, Operator::kNoProperties, 1, 0, 1)                     \
-  V(BitcastTaggedSignedToWord, Operator::kNoProperties, 1, 0, 1)              \
+  V(Simd128ReverseBytes, Operator::kNoProperties, 1, 0, 1)                    \
+  V(BitcastTaggedToWordForTagAndSmiBits, Operator::kNoProperties, 1, 0, 1)    \
   V(BitcastWordToTaggedSigned, Operator::kNoProperties, 1, 0, 1)              \
   V(BitcastWord32ToCompressedSigned, Operator::kNoProperties, 1, 0, 1)        \
   V(BitcastCompressedSignedToWord32, Operator::kNoProperties, 1, 0, 1)        \
@@ -244,6 +244,7 @@ MachineType AtomicOpType(Operator const* op) {
   V(Float64ExtractHighWord32, Operator::kNoProperties, 1, 0, 1)               \
   V(Float64InsertLowWord32, Operator::kNoProperties, 2, 0, 1)                 \
   V(Float64InsertHighWord32, Operator::kNoProperties, 2, 0, 1)                \
+  V(LoadStackCheckOffset, Operator::kNoProperties, 0, 0, 1)                   \
   V(LoadFramePointer, Operator::kNoProperties, 0, 0, 1)                       \
   V(LoadParentFramePointer, Operator::kNoProperties, 0, 0, 1)                 \
   V(Int32PairAdd, Operator::kNoProperties, 4, 0, 2)                           \
@@ -253,8 +254,11 @@ MachineType AtomicOpType(Operator const* op) {
   V(Word32PairShr, Operator::kNoProperties, 3, 0, 2)                          \
   V(Word32PairSar, Operator::kNoProperties, 3, 0, 2)                          \
   V(F64x2Splat, Operator::kNoProperties, 1, 0, 1)                             \
+  V(F64x2SConvertI64x2, Operator::kNoProperties, 1, 0, 1)                     \
+  V(F64x2UConvertI64x2, Operator::kNoProperties, 1, 0, 1)                     \
   V(F64x2Abs, Operator::kNoProperties, 1, 0, 1)                               \
   V(F64x2Neg, Operator::kNoProperties, 1, 0, 1)                               \
+  V(F64x2Sqrt, Operator::kNoProperties, 1, 0, 1)                              \
   V(F64x2Add, Operator::kCommutative, 2, 0, 1)                                \
   V(F64x2Sub, Operator::kNoProperties, 2, 0, 1)                               \
   V(F64x2Mul, Operator::kCommutative, 2, 0, 1)                                \
@@ -265,11 +269,14 @@ MachineType AtomicOpType(Operator const* op) {
   V(F64x2Ne, Operator::kCommutative, 2, 0, 1)                                 \
   V(F64x2Lt, Operator::kNoProperties, 2, 0, 1)                                \
   V(F64x2Le, Operator::kNoProperties, 2, 0, 1)                                \
+  V(F64x2Qfma, Operator::kNoProperties, 3, 0, 1)                              \
+  V(F64x2Qfms, Operator::kNoProperties, 3, 0, 1)                              \
   V(F32x4Splat, Operator::kNoProperties, 1, 0, 1)                             \
   V(F32x4SConvertI32x4, Operator::kNoProperties, 1, 0, 1)                     \
   V(F32x4UConvertI32x4, Operator::kNoProperties, 1, 0, 1)                     \
   V(F32x4Abs, Operator::kNoProperties, 1, 0, 1)                               \
   V(F32x4Neg, Operator::kNoProperties, 1, 0, 1)                               \
+  V(F32x4Sqrt, Operator::kNoProperties, 1, 0, 1)                              \
   V(F32x4RecipApprox, Operator::kNoProperties, 1, 0, 1)                       \
   V(F32x4RecipSqrtApprox, Operator::kNoProperties, 1, 0, 1)                   \
   V(F32x4Add, Operator::kCommutative, 2, 0, 1)                                \
@@ -283,7 +290,10 @@ MachineType AtomicOpType(Operator const* op) {
   V(F32x4Ne, Operator::kCommutative, 2, 0, 1)                                 \
   V(F32x4Lt, Operator::kNoProperties, 2, 0, 1)                                \
   V(F32x4Le, Operator::kNoProperties, 2, 0, 1)                                \
+  V(F32x4Qfma, Operator::kNoProperties, 3, 0, 1)                              \
+  V(F32x4Qfms, Operator::kNoProperties, 3, 0, 1)                              \
   V(I64x2Splat, Operator::kNoProperties, 1, 0, 1)                             \
+  V(I64x2SplatI32Pair, Operator::kNoProperties, 2, 0, 1)                      \
   V(I64x2Neg, Operator::kNoProperties, 1, 0, 1)                               \
   V(I64x2Shl, Operator::kNoProperties, 2, 0, 1)                               \
   V(I64x2ShrS, Operator::kNoProperties, 2, 0, 1)                              \
@@ -395,7 +405,7 @@ MachineType AtomicOpType(Operator const* op) {
   V(S1x8AllTrue, Operator::kNoProperties, 1, 0, 1)                            \
   V(S1x16AnyTrue, Operator::kNoProperties, 1, 0, 1)                           \
   V(S1x16AllTrue, Operator::kNoProperties, 1, 0, 1)                           \
-  V(StackPointerGreaterThan, Operator::kNoProperties, 1, 0, 1)
+  V(S8x16Swizzle, Operator::kNoProperties, 2, 0, 1)
 
 // The format is:
 // V(Name, properties, value_input_count, control_input_count, output_count)
@@ -888,6 +898,26 @@ struct MachineOperatorGlobalCache {
                    "UnsafePointerAdd", 2, 1, 1, 1, 1, 0) {}
   };
   UnsafePointerAddOperator kUnsafePointerAdd;
+
+  struct StackPointerGreaterThanOperator : public Operator1<StackCheckKind> {
+    explicit StackPointerGreaterThanOperator(StackCheckKind kind)
+        : Operator1<StackCheckKind>(
+              IrOpcode::kStackPointerGreaterThan, Operator::kEliminatable,
+              "StackPointerGreaterThan", 1, 1, 0, 1, 1, 0, kind) {}
+  };
+#define STACK_POINTER_GREATER_THAN(Kind)                              \
+  struct StackPointerGreaterThan##Kind##Operator final                \
+      : public StackPointerGreaterThanOperator {                      \
+    StackPointerGreaterThan##Kind##Operator()                         \
+        : StackPointerGreaterThanOperator(StackCheckKind::k##Kind) {} \
+  };                                                                  \
+  StackPointerGreaterThan##Kind##Operator kStackPointerGreaterThan##Kind;
+
+  STACK_POINTER_GREATER_THAN(JSFunctionEntry)
+  STACK_POINTER_GREATER_THAN(JSIterationBody)
+  STACK_POINTER_GREATER_THAN(CodeStubAssembler)
+  STACK_POINTER_GREATER_THAN(Wasm)
+#undef STACK_POINTER_GREATER_THAN
 };
 
 struct CommentOperator : public Operator1<const char*> {
@@ -1052,6 +1082,21 @@ const Operator* MachineOperatorBuilder::ProtectedStore(
 
 const Operator* MachineOperatorBuilder::UnsafePointerAdd() {
   return &cache_.kUnsafePointerAdd;
+}
+
+const Operator* MachineOperatorBuilder::StackPointerGreaterThan(
+    StackCheckKind kind) {
+  switch (kind) {
+    case StackCheckKind::kJSFunctionEntry:
+      return &cache_.kStackPointerGreaterThanJSFunctionEntry;
+    case StackCheckKind::kJSIterationBody:
+      return &cache_.kStackPointerGreaterThanJSIterationBody;
+    case StackCheckKind::kCodeStubAssembler:
+      return &cache_.kStackPointerGreaterThanCodeStubAssembler;
+    case StackCheckKind::kWasm:
+      return &cache_.kStackPointerGreaterThanWasm;
+  }
+  UNREACHABLE();
 }
 
 const Operator* MachineOperatorBuilder::BitcastWordToTagged() {
@@ -1334,6 +1379,14 @@ const Operator* MachineOperatorBuilder::Word64PoisonOnSpeculation() {
 SIMD_LANE_OP_LIST(SIMD_LANE_OPS)
 #undef SIMD_LANE_OPS
 
+const Operator* MachineOperatorBuilder::I64x2ReplaceLaneI32Pair(
+    int32_t lane_index) {
+  DCHECK(0 <= lane_index && lane_index < 2);
+  return new (zone_)
+      Operator1<int32_t>(IrOpcode::kI64x2ReplaceLaneI32Pair, Operator::kPure,
+                         "Replace lane", 3, 0, 0, 1, 0, 0, lane_index);
+}
+
 const Operator* MachineOperatorBuilder::S8x16Shuffle(
     const uint8_t shuffle[16]) {
   uint8_t* array = zone_->NewArray<uint8_t>(16);
@@ -1346,6 +1399,11 @@ const Operator* MachineOperatorBuilder::S8x16Shuffle(
 const uint8_t* S8x16ShuffleOf(Operator const* op) {
   DCHECK_EQ(IrOpcode::kS8x16Shuffle, op->opcode());
   return OpParameter<uint8_t*>(op);
+}
+
+StackCheckKind StackCheckKindOf(Operator const* op) {
+  DCHECK_EQ(IrOpcode::kStackPointerGreaterThan, op->opcode());
+  return OpParameter<StackCheckKind>(op);
 }
 
 #undef PURE_BINARY_OP_LIST_32

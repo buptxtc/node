@@ -613,20 +613,6 @@ V8_WARN_UNUSED_RESULT static Object StringReplaceGlobalRegExpWithString(
 
   JSRegExp::Type typeTag = regexp->TypeTag();
   if (typeTag == JSRegExp::IRREGEXP) {
-    // Force tier up to native code for global replaces. The global replace is
-    // implemented differently for native code and bytecode execution, where the
-    // native code expects an array to store all the matches, and the bytecode
-    // matches one at a time, so it's easier to tier-up to native code from the
-    // start.
-    if (FLAG_regexp_tier_up) {
-      regexp->MarkTierUpForNextExec();
-      if (FLAG_trace_regexp_tier_up) {
-        PrintF(
-            "Forcing tier-up of JSRegExp object %p in "
-            "StringReplaceGlobalRegExpWithString\n",
-            reinterpret_cast<void*>(regexp->ptr()));
-      }
-    }
     // Ensure the RegExp is compiled so we can access the capture-name map.
     if (RegExp::IrregexpPrepare(isolate, regexp, subject) == -1) {
       DCHECK(isolate->has_pending_exception());
@@ -1069,15 +1055,15 @@ Handle<JSObject> ConstructNamedCaptureGroupsObject(
     const std::function<Object(int)>& f_get_capture) {
   Handle<JSObject> groups = isolate->factory()->NewJSObjectWithNullProto();
 
-  const int capture_count = capture_map->length() >> 1;
-  for (int i = 0; i < capture_count; i++) {
+  const int named_capture_count = capture_map->length() >> 1;
+  for (int i = 0; i < named_capture_count; i++) {
     const int name_ix = i * 2;
     const int index_ix = i * 2 + 1;
 
     Handle<String> capture_name(String::cast(capture_map->get(name_ix)),
                                 isolate);
     const int capture_ix = Smi::ToInt(capture_map->get(index_ix));
-    DCHECK(1 <= capture_ix && capture_ix <= capture_count);
+    DCHECK_GE(capture_ix, 1);  // Explicit groups start at index 1.
 
     Handle<Object> capture_value(f_get_capture(capture_ix), isolate);
     DCHECK(capture_value->IsUndefined(isolate) || capture_value->IsString());
@@ -1348,6 +1334,19 @@ V8_WARN_UNUSED_RESULT MaybeHandle<String> RegExpReplace(
     DCHECK(global);
     RETURN_ON_EXCEPTION(isolate, RegExpUtils::SetLastIndex(isolate, regexp, 0),
                         String);
+
+    // Force tier up to native code for global replaces. The global replace is
+    // implemented differently for native code and bytecode execution, where the
+    // native code expects an array to store all the matches, and the bytecode
+    // matches one at a time, so it's easier to tier-up to native code from the
+    // start.
+    if (FLAG_regexp_tier_up && regexp->TypeTag() == JSRegExp::IRREGEXP) {
+      regexp->MarkTierUpForNextExec();
+      if (FLAG_trace_regexp_tier_up) {
+        PrintF("Forcing tier-up of JSRegExp object %p in RegExpReplace\n",
+               reinterpret_cast<void*>(regexp->ptr()));
+      }
+    }
 
     if (replace->length() == 0) {
       if (string->IsOneByteRepresentation()) {

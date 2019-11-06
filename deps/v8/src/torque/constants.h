@@ -53,7 +53,27 @@ static const char* const CONST_FLOAT64_TYPE_STRING = "constexpr float64";
 static const char* const TORQUE_INTERNAL_NAMESPACE_STRING = "torque_internal";
 static const char* const REFERENCE_TYPE_STRING = "Reference";
 static const char* const SLICE_TYPE_STRING = "Slice";
-static const char* const STRUCT_NAMESPACE_STRING = "_struct";
+static const char* const GENERIC_TYPE_INSTANTIATION_NAMESPACE_STRING =
+    "_generic_type_instantiation_namespace";
+
+static const char* const ANNOTATION_GENERATE_PRINT = "@generatePrint";
+static const char* const ANNOTATION_NO_VERIFIER = "@noVerifier";
+static const char* const ANNOTATION_ABSTRACT = "@abstract";
+static const char* const ANNOTATION_INSTANTIATED_ABSTRACT_CLASS =
+    "@dirtyInstantiatedAbstractClass";
+static const char* const ANNOTATION_HAS_SAME_INSTANCE_TYPE_AS_PARENT =
+    "@hasSameInstanceTypeAsParent";
+static const char* const ANNOTATION_GENERATE_CPP_CLASS = "@generateCppClass";
+static const char* const ANNOTATION_HIGHEST_INSTANCE_TYPE_WITHIN_PARENT =
+    "@highestInstanceTypeWithinParentClassRange";
+static const char* const ANNOTATION_LOWEST_INSTANCE_TYPE_WITHIN_PARENT =
+    "@lowestInstanceTypeWithinParentClassRange";
+static const char* const ANNOTATION_RESERVE_BITS_IN_INSTANCE_TYPE =
+    "@reserveBitsInInstanceType";
+static const char* const ANNOTATION_INSTANCE_TYPE_VALUE =
+    "@apiExposedInstanceTypeValue";
+static const char* const ANNOTATION_IF = "@if";
+static const char* const ANNOTATION_IFNOT = "@ifnot";
 
 inline bool IsConstexprName(const std::string& name) {
   return name.substr(0, std::strlen(CONSTEXPR_TYPE_PREFIX)) ==
@@ -80,9 +100,15 @@ enum class ClassFlag {
   kInstantiatedAbstractClass = 1 << 5,
   kHasSameInstanceTypeAsParent = 1 << 6,
   kGenerateCppClassDefinitions = 1 << 7,
-  kHasIndexedField = 1 << 8
+  kHasIndexedField = 1 << 8,
+  kHighestInstanceTypeWithinParent = 1 << 9,
+  kLowestInstanceTypeWithinParent = 1 << 10,
+  kUndefinedLayout = 1 << 11,
 };
 using ClassFlags = base::Flags<ClassFlag>;
+
+enum class StructFlag { kNone = 0, kExport = 1 << 0 };
+using StructFlags = base::Flags<StructFlag>;
 
 }  // namespace torque
 }  // namespace internal

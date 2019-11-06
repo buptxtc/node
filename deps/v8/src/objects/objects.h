@@ -46,19 +46,22 @@
 //         - JSArrayBufferView
 //           - JSTypedArray
 //           - JSDataView
-//         - JSBoundFunction
 //         - JSCollection
 //           - JSSet
 //           - JSMap
+//         - JSCustomElementsObject (may have elements despite empty FixedArray)
+//           - JSSpecialObject (requires custom property lookup handling)
+//             - JSGlobalObject
+//             - JSGlobalProxy
+//             - JSModuleNamespace
+//           - JSPrimitiveWrapper
 //         - JSDate
-//         - JSFunction
+//         - JSFunctionOrBoundFunction
+//           - JSBoundFunction
+//           - JSFunction
 //         - JSGeneratorObject
-//         - JSGlobalObject
-//         - JSGlobalProxy
 //         - JSMapIterator
 //         - JSMessageObject
-//         - JSModuleNamespace
-//         - JSPrimitiveWrapper
 //         - JSRegExp
 //         - JSSetIterator
 //         - JSStringIterator
@@ -104,30 +107,32 @@
 //         - ScriptContextTable
 //         - ClosureFeedbackCellArray
 //       - FixedDoubleArray
-//     - Name
-//       - String
-//         - SeqString
-//           - SeqOneByteString
-//           - SeqTwoByteString
-//         - SlicedString
-//         - ConsString
-//         - ThinString
-//         - ExternalString
-//           - ExternalOneByteString
-//           - ExternalTwoByteString
-//         - InternalizedString
-//           - SeqInternalizedString
-//             - SeqOneByteInternalizedString
-//             - SeqTwoByteInternalizedString
-//           - ConsInternalizedString
-//           - ExternalInternalizedString
-//             - ExternalOneByteInternalizedString
-//             - ExternalTwoByteInternalizedString
-//       - Symbol
+//     - PrimitiveHeapObject
+//       - BigInt
+//       - HeapNumber
+//       - Name
+//         - String
+//           - SeqString
+//             - SeqOneByteString
+//             - SeqTwoByteString
+//           - SlicedString
+//           - ConsString
+//           - ThinString
+//           - ExternalString
+//             - ExternalOneByteString
+//             - ExternalTwoByteString
+//           - InternalizedString
+//             - SeqInternalizedString
+//               - SeqOneByteInternalizedString
+//               - SeqTwoByteInternalizedString
+//             - ConsInternalizedString
+//             - ExternalInternalizedString
+//               - ExternalOneByteInternalizedString
+//               - ExternalTwoByteInternalizedString
+//         - Symbol
+//       - Oddball
 //     - Context
 //       - NativeContext
-//     - HeapNumber
-//     - BigInt
 //     - Cell
 //     - DescriptorArray
 //     - PropertyCell
@@ -135,7 +140,6 @@
 //     - Code
 //     - AbstractCode, a wrapper around Code or BytecodeArray
 //     - Map
-//     - Oddball
 //     - Foreign
 //     - SmallOrderedHashTable
 //       - SmallOrderedHashMap
@@ -452,8 +456,7 @@ class Object : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
       Isolate* isolate, Handle<Object> object, Handle<Object> callable);
 
   V8_EXPORT_PRIVATE V8_WARN_UNUSED_RESULT static MaybeHandle<Object>
-  GetProperty(LookupIterator* it,
-              OnNonExistent on_non_existent = OnNonExistent::kReturnUndefined);
+  GetProperty(LookupIterator* it, bool is_global_reference = false);
 
   // ES6 [[Set]] (when passed kDontThrow)
   // Invariants for this and related functions (unless stated otherwise):
@@ -607,15 +610,13 @@ class Object : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
   // For use with std::unordered_set.
   struct Hasher {
     size_t operator()(const Object o) const {
-      return std::hash<v8::internal::Address>{}(o.ptr());
+      return std::hash<v8::internal::Address>{}(static_cast<Tagged_t>(o.ptr()));
     }
   };
 
   // For use with std::map.
   struct Comparer {
-    bool operator()(const Object a, const Object b) const {
-      return a.ptr() < b.ptr();
-    }
+    bool operator()(const Object a, const Object b) const { return a < b; }
   };
 
   template <class T, typename std::enable_if<std::is_arithmetic<T>::value,
@@ -784,7 +785,8 @@ enum AccessorComponent { ACCESSOR_GETTER, ACCESSOR_SETTER };
 
 enum class GetKeysConversion {
   kKeepNumbers = static_cast<int>(v8::KeyConversionMode::kKeepNumbers),
-  kConvertToString = static_cast<int>(v8::KeyConversionMode::kConvertToString)
+  kConvertToString = static_cast<int>(v8::KeyConversionMode::kConvertToString),
+  kNoNumbers = static_cast<int>(v8::KeyConversionMode::kNoNumbers)
 };
 
 enum class KeyCollectionMode {

@@ -156,7 +156,8 @@
   V(JSCreateObject)              \
   V(JSCreatePromise)             \
   V(JSCreateStringIterator)      \
-  V(JSCreateTypedArray)
+  V(JSCreateTypedArray)          \
+  V(JSGetTemplateObject)
 
 #define JS_OBJECT_OP_LIST(V)      \
   JS_CREATE_OP_LIST(V)            \
@@ -174,6 +175,7 @@
   V(JSGetSuperConstructor)
 
 #define JS_CONTEXT_OP_LIST(V) \
+  V(JSHasContextExtension)    \
   V(JSLoadContext)            \
   V(JSStoreContext)           \
   V(JSCreateFunctionContext)  \
@@ -281,6 +283,7 @@
   V(CheckedFloat64ToInt64)            \
   V(CheckedTaggedSignedToInt32)       \
   V(CheckedTaggedToInt32)             \
+  V(CheckedTaggedToArrayIndex)        \
   V(CheckedTruncateTaggedToWord32)    \
   V(CheckedTaggedToFloat64)           \
   V(CheckedTaggedToInt64)             \
@@ -425,11 +428,14 @@
   V(LoadFieldByIndex)                   \
   V(LoadField)                          \
   V(LoadElement)                        \
+  V(LoadMessage)                        \
   V(LoadTypedElement)                   \
   V(LoadFromObject)                     \
   V(LoadDataViewElement)                \
+  V(LoadStackArgument)                  \
   V(StoreField)                         \
   V(StoreElement)                       \
+  V(StoreMessage)                       \
   V(StoreTypedElement)                  \
   V(StoreToObject)                      \
   V(StoreDataViewElement)               \
@@ -669,9 +675,10 @@
   V(Word64Ctz)                              \
   V(Word64ReverseBits)                      \
   V(Word64ReverseBytes)                     \
+  V(Simd128ReverseBytes)                    \
   V(Int64AbsWithOverflow)                   \
   V(BitcastTaggedToWord)                    \
-  V(BitcastTaggedSignedToWord)              \
+  V(BitcastTaggedToWordForTagAndSmiBits)    \
   V(BitcastWordToTagged)                    \
   V(BitcastWordToTaggedSigned)              \
   V(BitcastWord32ToCompressedSigned)        \
@@ -722,6 +729,7 @@
   V(TaggedPoisonOnSpeculation)              \
   V(Word32PoisonOnSpeculation)              \
   V(Word64PoisonOnSpeculation)              \
+  V(LoadStackCheckOffset)                   \
   V(LoadFramePointer)                       \
   V(LoadParentFramePointer)                 \
   V(UnalignedLoad)                          \
@@ -745,10 +753,13 @@
 
 #define MACHINE_SIMD_OP_LIST(V) \
   V(F64x2Splat)                 \
+  V(F64x2SConvertI64x2)         \
+  V(F64x2UConvertI64x2)         \
   V(F64x2ExtractLane)           \
   V(F64x2ReplaceLane)           \
   V(F64x2Abs)                   \
   V(F64x2Neg)                   \
+  V(F64x2Sqrt)                  \
   V(F64x2Add)                   \
   V(F64x2Sub)                   \
   V(F64x2Mul)                   \
@@ -759,6 +770,8 @@
   V(F64x2Ne)                    \
   V(F64x2Lt)                    \
   V(F64x2Le)                    \
+  V(F64x2Qfma)                  \
+  V(F64x2Qfms)                  \
   V(F32x4Splat)                 \
   V(F32x4ExtractLane)           \
   V(F32x4ReplaceLane)           \
@@ -766,6 +779,7 @@
   V(F32x4UConvertI32x4)         \
   V(F32x4Abs)                   \
   V(F32x4Neg)                   \
+  V(F32x4Sqrt)                  \
   V(F32x4RecipApprox)           \
   V(F32x4RecipSqrtApprox)       \
   V(F32x4Add)                   \
@@ -781,9 +795,13 @@
   V(F32x4Le)                    \
   V(F32x4Gt)                    \
   V(F32x4Ge)                    \
+  V(F32x4Qfma)                  \
+  V(F32x4Qfms)                  \
   V(I64x2Splat)                 \
+  V(I64x2SplatI32Pair)          \
   V(I64x2ExtractLane)           \
   V(I64x2ReplaceLane)           \
+  V(I64x2ReplaceLaneI32Pair)    \
   V(I64x2Neg)                   \
   V(I64x2Shl)                   \
   V(I64x2ShrS)                  \
@@ -905,6 +923,7 @@
   V(S128Or)                     \
   V(S128Xor)                    \
   V(S128Select)                 \
+  V(S8x16Swizzle)               \
   V(S8x16Shuffle)               \
   V(S1x2AnyTrue)                \
   V(S1x2AllTrue)                \

@@ -40,6 +40,7 @@
 #ifndef V8_CODEGEN_S390_ASSEMBLER_S390_H_
 #define V8_CODEGEN_S390_ASSEMBLER_S390_H_
 #include <stdio.h>
+#include <memory>
 #if V8_HOST_ARCH_S390
 // elf.h include is required for auxv check for STFLE facility used
 // for hardware detection, which is sensible only on s390 hosts.
@@ -1143,6 +1144,19 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
     emit6bytes(code);                                                      \
   }
   S390_VRR_E_OPCODE_LIST(DECLARE_VRR_E_INSTRUCTIONS)
+#undef DECLARE_VRR_E_INSTRUCTIONS
+
+#define DECLARE_VRR_F_INSTRUCTIONS(name, opcode_name, opcode_value)        \
+  void name(DoubleRegister v1, Register r1, Register r2) {                 \
+    uint64_t code = (static_cast<uint64_t>(opcode_value & 0xFF00)) * B32 | \
+                    (static_cast<uint64_t>(v1.code())) * B36 |             \
+                    (static_cast<uint64_t>(r1.code())) * B32 |             \
+                    (static_cast<uint64_t>(r2.code())) * B28 |             \
+                    (static_cast<uint64_t>(0)) * B8 |                      \
+                    (static_cast<uint64_t>(opcode_value & 0x00FF));        \
+    emit6bytes(code);                                                      \
+  }
+  S390_VRR_F_OPCODE_LIST(DECLARE_VRR_F_INSTRUCTIONS)
 #undef DECLARE_VRR_E_INSTRUCTIONS
 
 #define DECLARE_VRX_INSTRUCTIONS(name, opcode_name, opcode_value)       \

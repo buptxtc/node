@@ -771,11 +771,20 @@ void StringCharacterStream::VisitTwoByteString(const uint16_t* chars,
 }
 
 bool String::AsArrayIndex(uint32_t* index) {
+  DisallowHeapAllocation no_gc;
   uint32_t field = hash_field();
   if (IsHashFieldComputed(field) && (field & kIsNotArrayIndexMask)) {
     return false;
   }
   return SlowAsArrayIndex(index);
+}
+
+bool String::AsIntegerIndex(size_t* index) {
+  uint32_t field = hash_field();
+  if (IsHashFieldComputed(field) && (field & kIsNotIntegerIndexMask)) {
+    return false;
+  }
+  return SlowAsIntegerIndex(index);
 }
 
 SubStringRange::SubStringRange(String string,

@@ -16,9 +16,11 @@ class StringBuiltinsAssembler : public CodeStubAssembler {
       : CodeStubAssembler(state) {}
 
   // ES#sec-getsubstitution
-  Node* GetSubstitution(Node* context, Node* subject_string,
-                        Node* match_start_index, Node* match_end_index,
-                        Node* replace_string);
+  TNode<String> GetSubstitution(TNode<Context> context,
+                                TNode<String> subject_string,
+                                TNode<Smi> match_start_index,
+                                TNode<Smi> match_end_index,
+                                TNode<String> replace_string);
   void StringEqual_Core(SloppyTNode<String> lhs, Node* lhs_instance_type,
                         SloppyTNode<String> rhs, Node* rhs_instance_type,
                         TNode<IntPtrT> length, Label* if_equal,
@@ -32,6 +34,31 @@ class StringBuiltinsAssembler : public CodeStubAssembler {
                                     SloppyTNode<IntPtrT> length,
                                     SloppyTNode<IntPtrT> index,
                                     UnicodeEncoding encoding);
+
+  TNode<String> StringFromSingleUTF16EncodedCodePoint(TNode<Int32T> codepoint);
+
+  // Return a new string object which holds a substring containing the range
+  // [from,to[ of string.
+  // TODO(v8:9880): Fix implementation to use UintPtrT arguments and drop
+  // IntPtrT version once all callers use UintPtrT version.
+  TNode<String> SubString(TNode<String> string, TNode<IntPtrT> from,
+                          TNode<IntPtrT> to);
+  TNode<String> SubString(TNode<String> string, TNode<UintPtrT> from,
+                          TNode<UintPtrT> to) {
+    return SubString(string, Signed(from), Signed(to));
+  }
+
+  // Copies |character_count| elements from |from_string| to |to_string|
+  // starting at the |from_index|'th character. |from_string| and |to_string|
+  // can either be one-byte strings or two-byte strings, although if
+  // |from_string| is two-byte, then |to_string| must be two-byte.
+  // |from_index|, |to_index| and |character_count| must be intptr_ts s.t. 0 <=
+  // |from_index| <= |from_index| + |character_count| <= from_string.length and
+  // 0 <= |to_index| <= |to_index| + |character_count| <= to_string.length.
+  V8_EXPORT_PRIVATE void CopyStringCharacters(
+      Node* from_string, Node* to_string, TNode<IntPtrT> from_index,
+      TNode<IntPtrT> to_index, TNode<IntPtrT> character_count,
+      String::Encoding from_encoding, String::Encoding to_encoding);
 
  protected:
   void StringEqual_Loop(Node* lhs, Node* lhs_instance_type,
@@ -51,8 +78,8 @@ class StringBuiltinsAssembler : public CodeStubAssembler {
                             Node* const search_ptr, Node* const search_length,
                             Node* const start_position);
 
-  TNode<IntPtrT> PointerToStringDataAtIndex(Node* const string_data,
-                                            Node* const index,
+  TNode<RawPtrT> PointerToStringDataAtIndex(TNode<RawPtrT> string_data,
+                                            TNode<IntPtrT> index,
                                             String::Encoding encoding);
 
   // substr and slice have a common way of handling the {start} argument.
@@ -66,9 +93,9 @@ class StringBuiltinsAssembler : public CodeStubAssembler {
   using StringAtAccessor = std::function<TNode<Object>(
       TNode<String> receiver, TNode<IntPtrT> length, TNode<IntPtrT> index)>;
 
-  void StringIndexOf(TNode<String> const subject_string,
-                     TNode<String> const search_string,
-                     TNode<Smi> const position,
+  void StringIndexOf(const TNode<String> subject_string,
+                     const TNode<String> search_string,
+                     const TNode<Smi> position,
                      const std::function<void(TNode<Smi>)>& f_return);
 
   TNode<Smi> IndexOfDollarChar(Node* const context, Node* const string);
@@ -81,6 +108,38 @@ class StringBuiltinsAssembler : public CodeStubAssembler {
   TNode<BoolT> SmiIsNegative(TNode<Smi> value) {
     return SmiLessThan(value, SmiConstant(0));
   }
+
+  TNode<String> AllocateConsString(TNode<Uint32T> length, TNode<String> left,
+                                   TNode<String> right);
+
+  TNode<String> StringAdd(Node* context, TNode<String> left,
+                          TNode<String> right);
+
+  // Check if |string| is an indirect (thin or flat cons) string type that can
+  // be dereferenced by DerefIndirectString.
+  void BranchIfCanDerefIndirectString(TNode<String> string,
+                                      TNode<Int32T> instance_type,
+                                      Label* can_deref, Label* cannot_deref);
+  // Allocate an appropriate one- or two-byte ConsString with the first and
+  // second parts specified by |left| and |right|.
+  // Unpack an indirect (thin or flat cons) string type.
+  void DerefIndirectString(TVariable<String>* var_string,
+                           TNode<Int32T> instance_type);
+  // Check if |var_string| has an indirect (thin or flat cons) string type, and
+  // unpack it if so.
+  void MaybeDerefIndirectString(TVariable<String>* var_string,
+                                TNode<Int32T> instance_type, Label* did_deref,
+                                Label* cannot_deref);
+  // Check if |var_left| or |var_right| has an indirect (thin or flat cons)
+  // string type, and unpack it/them if so. Fall through if nothing was done.
+  void MaybeDerefIndirectStrings(TVariable<String>* var_left,
+                                 TNode<Int32T> left_instance_type,
+                                 TVariable<String>* var_right,
+                                 TNode<Int32T> right_instance_type,
+                                 Label* did_something);
+  TNode<String> DerefIndirectString(TNode<String> string,
+                                    TNode<Int32T> instance_type,
+                                    Label* cannot_deref);
 
   // Implements boilerplate logic for {match, split, replace, search} of the
   // form:
@@ -103,6 +162,12 @@ class StringBuiltinsAssembler : public CodeStubAssembler {
       Handle<Symbol> symbol,
       DescriptorIndexNameValue additional_property_to_check,
       const NodeFunction0& regexp_call, const NodeFunction1& generic_call);
+
+ private:
+  TNode<String> AllocAndCopyStringCharacters(Node* from,
+                                             Node* from_instance_type,
+                                             TNode<IntPtrT> from_index,
+                                             TNode<IntPtrT> character_count);
 };
 
 class StringIncludesIndexOfAssembler : public StringBuiltinsAssembler {
@@ -123,7 +188,7 @@ class StringTrimAssembler : public StringBuiltinsAssembler {
       : StringBuiltinsAssembler(state) {}
 
   V8_EXPORT_PRIVATE void GotoIfNotWhiteSpaceOrLineTerminator(
-      TNode<Word32T> const char_code, Label* const if_not_whitespace);
+      const TNode<Word32T> char_code, Label* const if_not_whitespace);
 
  protected:
   void Generate(String::TrimMode mode, const char* method, TNode<IntPtrT> argc,
@@ -132,9 +197,9 @@ class StringTrimAssembler : public StringBuiltinsAssembler {
   void ScanForNonWhiteSpaceOrLineTerminator(
       Node* const string_data, Node* const string_data_offset,
       Node* const is_stringonebyte, TVariable<IntPtrT>* const var_index,
-      TNode<IntPtrT> const end, int increment, Label* const if_none_found);
+      const TNode<IntPtrT> end, int increment, Label* const if_none_found);
 
-  void BuildLoop(TVariable<IntPtrT>* const var_index, TNode<IntPtrT> const end,
+  void BuildLoop(TVariable<IntPtrT>* const var_index, const TNode<IntPtrT> end,
                  int increment, Label* const if_none_found, Label* const out,
                  const std::function<Node*(Node*)>& get_character);
 };
